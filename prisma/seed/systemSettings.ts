@@ -86,6 +86,24 @@ const SETTINGS: SettingSeed[] = [
     is_public: true,
   },
   {
+    key: 'event.payment_hold_days',
+    value: '5',
+    value_type: SettingValueType.NUMBER,
+    group: 'events',
+    description:
+      'How many days a registration holds its seats before an unpaid booking is released and the seats return to the pool. Reminder emails are derived from this number rather than configured separately, so the two can never disagree: first at ceil(hold/2), final at hold-1.',
+    is_public: false,
+  },
+  {
+    key: 'membership.grace_days',
+    value: '30',
+    value_type: SettingValueType.NUMBER,
+    group: 'membership',
+    description:
+      'How long after a membership expires the firm still gets member pricing on events. A member three days late renewing is not an outsider; past this window they pay the non-member price and the screen prompts them to renew.',
+    is_public: false,
+  },
+  {
     key: 'billing.invoice_due_days',
     value: '15',
     value_type: SettingValueType.NUMBER,

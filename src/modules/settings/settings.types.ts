@@ -96,6 +96,16 @@ export const EDITABLE_SETTINGS: Record<string, z.ZodType<string>> = {
   // Capped well above any plausible fee. The cap is a typo guard, not a policy:
   // an extra zero on an application fee reaches a real member as a real invoice.
   'billing.application_fee_amount': money(10_000_000),
+  /*
+    Bounded hard. This number freezes seats: set it to 500 by mistake and every
+    unpaid booking holds its seats for over a year, which silently sells out
+    every event. One day is the floor because a hold shorter than that expires
+    before a bank transfer can clear.
+  */
+  'event.payment_hold_days': wholeNumber(1, 30),
+  // A grace period, not a second membership term — a year of grace would mean
+  // expiry never actually costs anything.
+  'membership.grace_days': wholeNumber(0, 365),
 };
 
 export const updateSettingsSchema = z.object({
