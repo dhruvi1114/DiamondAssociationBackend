@@ -181,16 +181,15 @@
     "reminderSent": "Renewal reminder sent"
   },
   "event": {
-    "notFound": "Event not found",
+    "notFound": "That event no longer exists",
     "created": "Event created",
     "updated": "Event updated",
     "published": "Event published",
     "cancelled": "Event cancelled",
-    "registrationClosed": "Registration for this event is closed",
-    "registrationFull": "This event is fully booked",
-    "alreadyRegistered": "You are already registered for this event",
-    "registered": "Registration confirmed",
-    "checkedIn": "Attendance recorded"
+    "cancelledCannotEdit": "A cancelled event cannot be edited",
+    "alreadyPublished": "This event is already published",
+    "noPriceTier": "Add at least one price tier before publishing",
+    "hasRegistrations": "This event has registrations and cannot be cancelled here yet"
   },
   "communication": {
     "noticeNotFound": "Notice not found",
@@ -272,7 +271,12 @@
     "required": "This field is required",
     "invalidNumber": "Please enter a whole number",
     "outOfRange": "That value is outside the allowed range",
-    "invalidPrefix": "Use 1-10 capital letters or digits, with no spaces or symbols"
+    "invalidPrefix": "Use 1-10 capital letters or digits, with no spaces or symbols",
+    "tierEndsBeforeItStarts": "A price tier cannot end before it starts",
+    "eventEndsBeforeItStarts": "The event cannot end before it starts",
+    "registrationClosesAfterStart": "Registration must close on or before the event starts",
+    "registrationWindowInverted": "Registration cannot close before it opens",
+    "priceTiersOverlap": "Two price tiers cover the same dates"
   },
   "masters": {
     "invalidCode": "Use capitals, digits and underscores only, starting with a letter — for example GROWER",

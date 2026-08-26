@@ -211,6 +211,16 @@ export const AUDIT_ACTIONS = {
   MEMBER_TEAM_INVITED: 'member_team.invited',
   /** An owner switched a team login on or off. */
   MEMBER_TEAM_STATUS_CHANGED: 'member_team.status_changed',
+
+  // --- M7: events -----------------------------------------------------------
+  /** A draft event was created. */
+  EVENT_CREATED: 'event.created',
+  /** An event's details or price table were edited. */
+  EVENT_UPDATED: 'event.updated',
+  /** An event went live to its audience. */
+  EVENT_PUBLISHED: 'event.published',
+  /** An event was called off. */
+  EVENT_CANCELLED: 'event.cancelled',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
