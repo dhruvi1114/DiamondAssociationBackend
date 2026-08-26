@@ -2,7 +2,12 @@ import { Router } from 'express';
 import { END_POINTS } from '@constant';
 import { authenticateAdmin, authorize, validateRequest } from '@middleware';
 import * as controller from '@modules/event/event.controller';
-import { createEventSchema, listEventsSchema, updateEventSchema } from '@modules/event/event.types';
+import {
+  cancelEventSchema,
+  createEventSchema,
+  listEventsSchema,
+  updateEventSchema,
+} from '@modules/event/event.types';
 import { idParamSchema } from '@modules/member/member.types';
 
 /** `/api/v1/admin/events` — staff-facing event management (A-21…A-22). */
@@ -36,4 +41,18 @@ eventAdminRouter.patch(
   authorize('event.manage'),
   validateRequest({ params: idParamSchema, body: updateEventSchema }),
   controller.updateEvent,
+);
+
+eventAdminRouter.post(
+  `${END_POINTS.EVENTS}/:id/publish`,
+  authorize('event.publish'),
+  validateRequest({ params: idParamSchema }),
+  controller.publishEvent,
+);
+
+eventAdminRouter.post(
+  `${END_POINTS.EVENTS}/:id/cancel`,
+  authorize('event.publish'),
+  validateRequest({ params: idParamSchema, body: cancelEventSchema }),
+  controller.cancelEvent,
 );

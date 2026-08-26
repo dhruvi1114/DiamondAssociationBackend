@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { MemberStatus, Prisma } from '@prisma/client';
 import { prisma } from '@db/prisma';
 import type { Db } from '@db/prisma';
 import type { ListEventsQuery } from '@modules/event/event.types';
@@ -77,3 +77,15 @@ export const listEventsAdmin = async (query: ListEventsQuery): Promise<AdminEven
      LIMIT ${query.limit} OFFSET ${offset}
   `);
 };
+
+/**
+ * How many people a publish will reach.
+ *
+ * Counted at publish time and returned with the result, because the admin
+ * confirmation dialog states the number *before* the click — this is the record
+ * of what was actually announced. Members-only and public events reach the same
+ * member base; the difference is whether the public can also see it, which no
+ * count can express.
+ */
+export const countPublishAudience = (db: Db): Promise<number> =>
+  db.member.count({ where: { status: MemberStatus.ACTIVE, deletedAt: null } });

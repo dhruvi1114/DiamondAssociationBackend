@@ -93,3 +93,34 @@ export const listEvents = handler(async (req, res) => {
     },
   });
 });
+
+/**
+ * `POST /admin/events/:id/publish` — make it visible.
+ *
+ * The response carries `audience_size` so the success message can confirm what
+ * the confirmation dialog promised: "now visible to 1,240 members".
+ */
+export const publishEvent = handler(async (req, res) => {
+  const result = await service.publishEvent(BigInt(req.params.id as string), actor(req));
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'event.published',
+    data: serialise(result),
+  });
+});
+
+/** `POST /admin/events/:id/cancel` — call it off, with a mandatory reason. */
+export const cancelEvent = handler(async (req, res) => {
+  const result = await service.cancelEvent(
+    BigInt(req.params.id as string),
+    req.body as never,
+    actor(req),
+  );
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'event.cancelled',
+    data: serialise(result),
+  });
+});

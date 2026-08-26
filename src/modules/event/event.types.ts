@@ -103,3 +103,15 @@ export const listEventsSchema = z.object({
 });
 
 export type ListEventsQuery = z.infer<typeof listEventsSchema>;
+
+/**
+ * Body of `POST /admin/events/:id/cancel`.
+ *
+ * The reason is mandatory: it is what everyone registered is told, and a
+ * cancellation with no explanation is the version that generates support calls.
+ */
+export const cancelEventSchema = z.object({
+  reason: z.string().trim().min(3).max(500),
+});
+
+export type CancelEventInput = z.infer<typeof cancelEventSchema>;

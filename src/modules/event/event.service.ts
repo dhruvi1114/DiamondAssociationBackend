@@ -187,3 +187,87 @@ export const listEvents = async (query: ListEventsQuery) => {
     total: rows.length > 0 ? Number(rows[0].total) : 0,
   };
 };
+
+/**
+ * Make an event visible to its audience.
+ *
+ * Refused without a price tier: publishing would put a Register button on a page
+ * that cannot name a price. Refused when already published, so a second click
+ * cannot re-announce an event to everyone.
+ *
+ * The audience size travels back with the result because the confirmation dialog
+ * quotes it before the click — keeping it means the audit row records what the
+ * admin was actually told, not what the number happens to be later.
+ */
+export const publishEvent = async (id: bigint, actor: EventActor) => {
+  const event = await repo.findEventById(prisma, id);
+
+  if (!event) throw notFound();
+
+  if (event.status === EVENT_STATUS.CANCELLED) throw conflict('event.cancelledCannotEdit');
+  if (event.status !== EVENT_STATUS.DRAFT) throw conflict('event.alreadyPublished');
+  if (event.price_tiers.length === 0) throw conflict('event.noPriceTier');
+
+  const audienceSize = await repo.countPublishAudience(prisma);
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await repo.updateEvent(tx, id, {
+      status: EVENT_STATUS.PUBLISHED,
+      updated_by_admin_id: actor.id,
+    });
+
+    await writeAudit(tx, {
+      action: AUDIT_ACTIONS.EVENT_PUBLISHED,
+      entityName: 'Events',
+      entityId: id,
+      actorType: ACTOR_TYPES.ADMIN,
+      actorId: actor.id,
+      before: { status: event.status },
+      after: { status: EVENT_STATUS.PUBLISHED, audience_size: audienceSize },
+      ip: actor.ip,
+      userAgent: actor.userAgent,
+      requestId: actor.requestId,
+    });
+
+    return { id: updated.id.toString(), status: updated.status, audience_size: audienceSize };
+  });
+};
+
+/**
+ * Call an event off.
+ *
+ * While seats are held this is refused rather than allowed-with-a-warning: every
+ * held seat is either money already taken or a person expecting to attend, and
+ * cancelling without deciding what happens to them is exactly the state that
+ * produces refund disputes. The registration work replaces this guard with the
+ * refund-all flow; until then, refusing is the honest answer.
+ */
+export const cancelEvent = async (id: bigint, input: { reason: string }, actor: EventActor) => {
+  const event = await repo.findEventById(prisma, id);
+
+  if (!event) throw notFound();
+  if (event.status === EVENT_STATUS.CANCELLED) throw conflict('event.cancelledCannotEdit');
+  if (event.seats_taken > 0) throw conflict('event.hasRegistrations');
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await repo.updateEvent(tx, id, {
+      status: EVENT_STATUS.CANCELLED,
+      updated_by_admin_id: actor.id,
+    });
+
+    await writeAudit(tx, {
+      action: AUDIT_ACTIONS.EVENT_CANCELLED,
+      entityName: 'Events',
+      entityId: id,
+      actorType: ACTOR_TYPES.ADMIN,
+      actorId: actor.id,
+      before: { status: event.status },
+      after: { status: EVENT_STATUS.CANCELLED, reason: input.reason },
+      ip: actor.ip,
+      userAgent: actor.userAgent,
+      requestId: actor.requestId,
+    });
+
+    return { id: updated.id.toString(), status: updated.status };
+  });
+};
