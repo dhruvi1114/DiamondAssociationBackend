@@ -1,5 +1,7 @@
 import { JobRunStatus, NotificationStatus, Prisma } from '@prisma/client';
 import { prisma } from '@db/prisma';
+import { logger } from '@logger/logger';
+import { releaseExpiredHolds, remindersDue } from '@modules/event/expiry.service';
 import { drainNotifications } from '@notifications/drain';
 import type { JobDefinition } from '@jobs/runner';
 
@@ -100,10 +102,43 @@ export const retentionPruneJob: JobDefinition = {
   },
 };
 
+/**
+ * Release event holds nobody paid for, and warn the ones still in time.
+ *
+ * Hourly rather than nightly. A hold that expires at 09:00 is a seat somebody
+ * else could be buying at 09:05, and on a nearly-full event a nightly sweep
+ * would leave it unsellable for the rest of the day.
+ *
+ * Both halves live in one job because they ask the same question of the same
+ * rows — how long has this hold been waiting? Two jobs would let the reminder
+ * schedule and the release deadline drift apart, which is the very thing
+ * deriving the reminders from the hold length prevents.
+ */
+export const eventHoldSweepJob: JobDefinition = {
+  name: 'event.hold_sweep',
+  schedule: '5 * * * *',
+  description:
+    'Releases event seats held by unpaid bookings past their deadline, and flags bookings due a payment reminder.',
+  handler: async () => {
+    const released = await releaseExpiredHolds();
+    const reminders = await remindersDue();
+
+    if (reminders.length > 0) {
+      logger.info('event.remindersDue', {
+        count: reminders.length,
+        codes: reminders.map((row) => row.registration_code),
+      });
+    }
+
+    return released + reminders.length;
+  },
+};
+
 export const jobDefinitions: JobDefinition[] = [
   notificationDrainJob,
   tokenPruneJob,
   retentionPruneJob,
+  eventHoldSweepJob,
 ];
 
 /**
