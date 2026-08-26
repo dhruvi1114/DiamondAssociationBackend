@@ -13,6 +13,7 @@ import {
   PAYMENT_METHOD,
   PAYMENT_STATUS,
 } from '@modules/billing/payment.constants';
+import { nextPaymentNumber, nextReceiptNumber } from '@modules/billing/numbering';
 import * as repo from '@modules/member/member.repository';
 import { MEMBER_ROLE, MEMBER_USER_STATUS } from '@modules/member/team.constants';
 import { APPROVAL_REQUIRED_FIELDS } from '@modules/member/member.types';
@@ -650,32 +651,6 @@ export const changeStatus = async (
 };
 
 export const listStatusHistory = (id: bigint) => repo.listStatusHistory(prisma, id);
-
-/**
- * Next payment number, PY + year + quarter + 3-digit sequence.
- *
- * Same counting scheme as `nextReceiptNumber`: a count inside the payment
- * transaction. It is not collision-proof under true concurrency, but the unique
- * index on `payment_number` is — a loser gets a unique violation rather than a
- * duplicate number, which is the same trade the receipt numbering already makes.
- */
-const nextPaymentNumber = async (tx: Prisma.TransactionClient): Promise<string> => {
-  const now = new Date();
-  const quarter = Math.floor(now.getUTCMonth() / 3) + 1;
-  const prefix = `PY${now.getUTCFullYear()}${String(quarter).padStart(2, '0')}`;
-  const count = await tx.payment.count({ where: { payment_number: { startsWith: prefix } } });
-
-  return `${prefix}${String(count + 1).padStart(3, '0')}`;
-};
-
-const nextReceiptNumber = async (tx: Prisma.TransactionClient): Promise<string> => {
-  const now = new Date();
-  const quarter = Math.floor(now.getUTCMonth() / 3) + 1;
-  const prefix = `RC${now.getUTCFullYear()}${String(quarter).padStart(2, '0')}`;
-  const count = await tx.receipt.count({ where: { receipt_number: { startsWith: prefix } } });
-
-  return `${prefix}${String(count + 1).padStart(3, '0')}`;
-};
 
 interface PaymentAttribution {
   /** NULL for a self-service payment (`member.repository.ts`'s "system did it" convention). */

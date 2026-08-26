@@ -410,6 +410,9 @@ model EventRegistration {
   /// The event booked.
   event Event @relation(fields: [event_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
+  /// The bill for it, when there is one.
+  invoice Invoice? @relation(fields: [invoice_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
   /// The people this booking is for.
   attendees EventRegistrationAttendee[]
 

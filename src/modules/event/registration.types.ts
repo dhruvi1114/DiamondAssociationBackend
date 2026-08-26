@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { FOOD_PREFERENCE, GOV_ID_TYPE } from '@modules/event/registration.constants';
+import {
+  FOOD_PREFERENCE,
+  GOV_ID_TYPE,
+  SUBMISSION_METHOD,
+} from '@modules/event/registration.constants';
 
 /**
  * One delegate on a booking.
@@ -81,3 +85,27 @@ export const listRegistrationsSchema = z.object({
 });
 
 export type ListRegistrationsQuery = z.infer<typeof listRegistrationsSchema>;
+
+/** Body of `POST /events/registrations/:id/payment` — "I have paid". */
+export const submitPaymentSchema = z.object({
+  // Cash is not claimable: money handed over the counter is recorded by the
+  // person who took it, not asserted by the payer.
+  method: z.union([
+    z.literal(SUBMISSION_METHOD.NEFT),
+    z.literal(SUBMISSION_METHOD.UPI),
+    z.literal(SUBMISSION_METHOD.CHEQUE),
+  ]),
+  reference_no: z.string().trim().min(3).max(100),
+  amount: z.coerce.number().positive(),
+  paid_on: z.coerce.date(),
+  proof_path: z.string().trim().max(500).optional(),
+});
+
+export type SubmitPaymentInput = z.infer<typeof submitPaymentSchema>;
+
+/** Body of `POST /admin/payment-submissions/:id/reject`. */
+export const rejectPaymentSchema = z.object({
+  reason: z.string().trim().min(3).max(500),
+});
+
+export type RejectPaymentInput = z.infer<typeof rejectPaymentSchema>;

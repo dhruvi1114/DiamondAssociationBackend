@@ -7,6 +7,7 @@ import { writeAudit } from '@helpers/audit';
 import { EVENT_STATUS } from '@modules/event/event.constants';
 import { resolveTier } from '@modules/event/event.pricing';
 import * as repo from '@modules/event/event.repository';
+import { touchedByAdmin } from '@modules/event/actorColumns';
 import { AppError } from '@utils/appError';
 import type {
   CreateEventInput,
@@ -149,7 +150,7 @@ export const updateEvent = async (id: bigint, input: UpdateEventInput, actor: Ev
   await prisma.$transaction(async (tx) => {
     await repo.updateEvent(tx, id, {
       ...eventColumns(input),
-      updated_by_admin_id: actor.id,
+      ...touchedByAdmin(actor.id),
     });
 
     await replaceTiers(tx, id, input, actor.id);
@@ -215,7 +216,7 @@ export const publishEvent = async (id: bigint, actor: EventActor) => {
   return prisma.$transaction(async (tx) => {
     const updated = await repo.updateEvent(tx, id, {
       status: EVENT_STATUS.PUBLISHED,
-      updated_by_admin_id: actor.id,
+      ...touchedByAdmin(actor.id),
     });
 
     await writeAudit(tx, {
@@ -254,7 +255,7 @@ export const cancelEvent = async (id: bigint, input: { reason: string }, actor: 
   return prisma.$transaction(async (tx) => {
     const updated = await repo.updateEvent(tx, id, {
       status: EVENT_STATUS.CANCELLED,
-      updated_by_admin_id: actor.id,
+      ...touchedByAdmin(actor.id),
     });
 
     await writeAudit(tx, {
@@ -289,7 +290,7 @@ export const deleteEvent = async (id: bigint, actor: EventActor) => {
   if (event.seats_taken > 0) throw conflict('event.hasRegistrations');
 
   return prisma.$transaction(async (tx) => {
-    await repo.updateEvent(tx, id, { deletedAt: new Date(), updated_by_admin_id: actor.id });
+    await repo.updateEvent(tx, id, { deletedAt: new Date(), ...touchedByAdmin(actor.id) });
 
     await writeAudit(tx, {
       action: AUDIT_ACTIONS.EVENT_DELETED,

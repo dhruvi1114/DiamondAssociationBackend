@@ -92,7 +92,8 @@ model Payment {
   receipt Receipt?
 
   /// Money sent back out of this payment.
-  refunds Refund[]
+  refunds            Refund[]
+  paymentSubmissions PaymentSubmission[]
 
   @@index([invoice_id])
   @@index([member_id, paid_at(sort: Desc)])
@@ -237,6 +238,9 @@ model PaymentSubmission {
 
   /// The invoice being settled.
   invoice Invoice @relation(fields: [invoice_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  /// The payment created when this claim was verified.
+  payment Payment? @relation(fields: [payment_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
   @@index([status, createdAt(sort: Desc)])
   @@index([invoice_id])

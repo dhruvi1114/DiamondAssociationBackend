@@ -202,7 +202,14 @@
     "registrationNotFound": "That registration no longer exists",
     "registrationNotAwaitingApproval": "This registration is not waiting for approval",
     "registrationApproved": "Registration approved",
-    "registrationRejected": "Registration rejected"
+    "registrationRejected": "Registration rejected",
+    "notAwaitingPayment": "This registration is not awaiting payment",
+    "noInvoiceToPay": "There is no invoice to pay for this registration",
+    "submissionNotFound": "That payment claim no longer exists",
+    "submissionDecided": "That payment claim has already been decided",
+    "paymentSubmitted": "Payment details received. We will confirm once verified.",
+    "paymentVerified": "Payment verified",
+    "paymentRejected": "Payment claim rejected"
   },
   "communication": {
     "noticeNotFound": "Notice not found",

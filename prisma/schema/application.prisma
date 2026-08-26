@@ -725,6 +725,7 @@ model Invoice {
   /// Money received against this invoice.
   payments           Payment[]
   paymentSubmissions PaymentSubmission[]
+  eventRegistrations EventRegistration[]
 
   @@index([member_id, status, issue_date(sort: Desc)])
   @@index([status, due_date])

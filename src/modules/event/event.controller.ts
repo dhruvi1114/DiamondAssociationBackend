@@ -2,6 +2,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { RES_STATUS } from '@constant/message.constant';
 import * as service from '@modules/event/event.service';
+import * as eventPayment from '@modules/event/payment.service';
 import * as registration from '@modules/event/registration.service';
 import { AppError } from '@utils/appError';
 import { handleApiResponse } from '@utils/handleResponse';
@@ -317,5 +318,63 @@ export const listAttendees = handler(async (req, res) => {
     responseType: RES_STATUS.GET,
     data: serialise({ rows }),
     pagination: { page, limit, total },
+  });
+});
+
+/* --- offline payment: the claim, and the decision on it --------------------- */
+
+/** `POST /events/registrations/:id/payment` — the payer says they have paid. */
+export const submitPayment = handler(async (req, res) => {
+  const result = await eventPayment.submitPayment(
+    BigInt(req.params.id as string),
+    req.body as never,
+    {
+      userId: req.actor?.id ?? null,
+      ip: req.ip ?? null,
+      userAgent: req.get('user-agent') ?? null,
+      requestId: req.requestId ?? null,
+    },
+  );
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.CREATE,
+    messageKey: 'event.paymentSubmitted',
+    data: serialise(result),
+  });
+});
+
+/** `POST /admin/payment-submissions/:id/verify` — staff confirm it landed. */
+export const verifyPayment = handler(async (req, res) => {
+  const result = await eventPayment.verifyPayment(BigInt(req.params.id as string), {
+    adminId: actor(req).id,
+    ip: req.ip ?? null,
+    userAgent: req.get('user-agent') ?? null,
+    requestId: req.requestId ?? null,
+  });
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'event.paymentVerified',
+    data: serialise(result),
+  });
+});
+
+/** `POST /admin/payment-submissions/:id/reject` — staff could not find it. */
+export const rejectPayment = handler(async (req, res) => {
+  const result = await eventPayment.rejectPayment(
+    BigInt(req.params.id as string),
+    req.body as never,
+    {
+      adminId: actor(req).id,
+      ip: req.ip ?? null,
+      userAgent: req.get('user-agent') ?? null,
+      requestId: req.requestId ?? null,
+    },
+  );
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'event.paymentRejected',
+    data: serialise(result),
   });
 });

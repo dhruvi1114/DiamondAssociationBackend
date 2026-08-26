@@ -17,6 +17,7 @@ import {
   SEAT_HOLDING_STATUSES,
 } from '@modules/event/registration.constants';
 import * as seats from '@modules/event/registration.repository';
+import { touchedByAdmin } from '@modules/event/actorColumns';
 import { AppError } from '@utils/appError';
 import type { Db } from '@db/prisma';
 import type { PriceTier } from '@modules/event/event.pricing';
@@ -444,7 +445,7 @@ export const approveRegistration = async (id: bigint, actor: AdminActor, now = n
         expires_at: isFree ? null : expiresAt,
         approved_at: now,
         approved_by_admin_id: actor.adminId,
-        updated_by_admin_id: actor.adminId,
+        ...touchedByAdmin(actor.adminId),
       },
     });
 
@@ -499,7 +500,7 @@ export const rejectRegistration = async (
         expires_at: null,
         cancelled_at: now,
         cancelled_by: CANCELLED_BY.ADMIN,
-        updated_by_admin_id: actor.adminId,
+        ...touchedByAdmin(actor.adminId),
       },
     });
 

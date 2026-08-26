@@ -5,7 +5,9 @@ import * as controller from '@modules/event/event.controller';
 import {
   listRegistrationsSchema,
   registerAsMemberSchema,
+  rejectPaymentSchema,
   rejectRegistrationSchema,
+  submitPaymentSchema,
 } from '@modules/event/registration.types';
 import {
   cancelEventSchema,
@@ -97,6 +99,20 @@ eventAdminRouter.post(
   controller.rejectRegistration,
 );
 
+eventAdminRouter.post(
+  '/payment-submissions/:id/verify',
+  authorize('payment.record'),
+  validateRequest({ params: idParamSchema }),
+  controller.verifyPayment,
+);
+
+eventAdminRouter.post(
+  '/payment-submissions/:id/reject',
+  authorize('payment.record'),
+  validateRequest({ params: idParamSchema, body: rejectPaymentSchema }),
+  controller.rejectPayment,
+);
+
 /** `/api/v1/public/events` — the public site. No session. */
 export const eventPublicRouter = Router();
 
@@ -115,4 +131,10 @@ eventMemberRouter.post(
   `${END_POINTS.EVENTS}/:slug/register`,
   validateRequest({ body: registerAsMemberSchema }),
   controller.registerForEvent,
+);
+
+eventMemberRouter.post(
+  `${END_POINTS.EVENTS}/registrations/:id/payment`,
+  validateRequest({ params: idParamSchema, body: submitPaymentSchema }),
+  controller.submitPayment,
 );
