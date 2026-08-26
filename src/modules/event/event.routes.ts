@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { END_POINTS } from '@constant';
-import { authenticateAdmin, authorize, validateRequest } from '@middleware';
+import { authenticate, authenticateAdmin, authorize, validateRequest } from '@middleware';
 import * as controller from '@modules/event/event.controller';
 import {
   cancelEventSchema,
@@ -56,3 +56,17 @@ eventAdminRouter.post(
   validateRequest({ params: idParamSchema, body: cancelEventSchema }),
   controller.cancelEvent,
 );
+
+/** `/api/v1/public/events` — the public site. No session. */
+export const eventPublicRouter = Router();
+
+eventPublicRouter.get(END_POINTS.EVENTS, controller.listPublicEvents);
+eventPublicRouter.get(`${END_POINTS.EVENTS}/:slug`, controller.getPublicEvent);
+
+/** `/api/v1/events` — the member's event list (C-24). */
+export const eventMemberRouter = Router();
+
+eventMemberRouter.use(authenticate);
+
+eventMemberRouter.get(END_POINTS.EVENTS, controller.listMemberEvents);
+eventMemberRouter.get(`${END_POINTS.EVENTS}/:slug`, controller.getMemberEvent);

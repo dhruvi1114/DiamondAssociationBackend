@@ -124,3 +124,62 @@ export const cancelEvent = handler(async (req, res) => {
     data: serialise(result),
   });
 });
+
+/* --- browsing -------------------------------------------------------------- */
+
+const pageQuery = (req: Request) => ({
+  page: Number(req.query.page ?? 1),
+  limit: Math.min(Number(req.query.limit ?? 20), 100),
+});
+
+/** `GET /public/events` — published public events. No session required. */
+export const listPublicEvents = handler(async (req, res) => {
+  const query = pageQuery(req);
+  const { rows, total } = await service.listPublicEvents(query);
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.GET,
+    data: serialise({ rows }),
+    pagination: { ...query, total },
+  });
+});
+
+/**
+ * `GET /public/events/:slug` — one public event.
+ *
+ * A members-only event is a 404, never a 403. The status code itself would
+ * otherwise confirm the event exists, which is precisely what members-only means
+ * it should not do.
+ */
+export const getPublicEvent = handler(async (req, res) => {
+  const event = await service.getPublicEvent(req.params.slug as string);
+
+  if (!event) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'event.notFound' });
+  }
+
+  handleApiResponse(res, { responseType: RES_STATUS.GET, data: serialise(event) });
+});
+
+/** `GET /events` — published events of both kinds, for a signed-in member. */
+export const listMemberEvents = handler(async (req, res) => {
+  const query = pageQuery(req);
+  const { rows, total } = await service.listMemberEvents(query);
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.GET,
+    data: serialise({ rows }),
+    pagination: { ...query, total },
+  });
+});
+
+/** `GET /events/:slug` — one published event, either visibility. */
+export const getMemberEvent = handler(async (req, res) => {
+  const event = await service.getMemberEvent(req.params.slug as string);
+
+  if (!event) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'event.notFound' });
+  }
+
+  handleApiResponse(res, { responseType: RES_STATUS.GET, data: serialise(event) });
+});

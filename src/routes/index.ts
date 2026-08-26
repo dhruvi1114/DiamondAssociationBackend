@@ -8,7 +8,11 @@ import {
   applicationPublicRouter,
   applicationSuperAdminRouter,
 } from '@modules/application/public.routes';
-import { eventAdminRouter } from '@modules/event/event.routes';
+import {
+  eventAdminRouter,
+  eventMemberRouter,
+  eventPublicRouter,
+} from '@modules/event/event.routes';
 import { mastersAdminRouter, mastersPublicRouter } from '@modules/masters/masters.routes';
 import {
   documentRouter,
@@ -57,6 +61,10 @@ router.use(`${END_POINTS.V1}${END_POINTS.DOCUMENTS}`, documentRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, memberAdminRouter);
 
 router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, eventAdminRouter);
+
+router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, eventPublicRouter);
+
+router.use(END_POINTS.V1, eventMemberRouter);
 
 // M5 — invoice and receipt PDFs, both audiences.
 router.use(`${END_POINTS.V1}${END_POINTS.INVOICES}`, invoiceRouter);

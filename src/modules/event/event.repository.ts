@@ -1,7 +1,12 @@
 import { MemberStatus, Prisma } from '@prisma/client';
 import { prisma } from '@db/prisma';
 import type { Db } from '@db/prisma';
+import { EVENT_STATUS, EVENT_VISIBILITY } from '@modules/event/event.constants';
 import type { ListEventsQuery } from '@modules/event/event.types';
+
+/** Pulled out so the raw statements read as SQL rather than as string building. */
+const EVENT_STATUS_PUBLISHED = EVENT_STATUS.PUBLISHED;
+const EVENT_VISIBILITY_PUBLIC = EVENT_VISIBILITY.PUBLIC;
 
 /**
  * Data access for events.
@@ -89,3 +94,89 @@ export const listEventsAdmin = async (query: ListEventsQuery): Promise<AdminEven
  */
 export const countPublishAudience = (db: Db): Promise<number> =>
   db.member.count({ where: { status: MemberStatus.ACTIVE, deletedAt: null } });
+
+export interface BrowseEventRow {
+  id: bigint;
+  slug: string;
+  title: string;
+  start_at: Date;
+  end_at: Date;
+  venue_name: string | null;
+  city: string | null;
+  visibility: number;
+  capacity: number | null;
+  seats_taken: number;
+  registration_closes_at: Date | null;
+  member_price: Prisma.Decimal | null;
+  non_member_price: Prisma.Decimal | null;
+  tier_name: string | null;
+  total: bigint;
+}
+
+/**
+ * One browse statement, shared by the public and member listings.
+ *
+ * `publicOnly` decides whether members-only events are in scope, and it goes
+ * into the WHERE clause rather than being filtered afterwards: an event the
+ * public may not see must never leave the database, or a paging bug becomes a
+ * disclosure bug.
+ *
+ * The lateral join attaches today's tier, so the list can show a real price
+ * without a second query per row.
+ */
+const browseEvents = (publicOnly: boolean, page: number, limit: number, upcomingOnly: boolean) => {
+  const offset = (page - 1) * limit;
+
+  return prisma.$queryRaw<BrowseEventRow[]>(Prisma.sql`
+    SELECT e."id", e."slug", e."title", e."start_at", e."end_at", e."venue_name", e."city",
+           e."visibility", e."capacity", e."seats_taken", e."registration_closes_at",
+           t."member_price", t."non_member_price", t."name" AS tier_name,
+           count(*) OVER () AS total
+      FROM "Events" e
+      LEFT JOIN LATERAL (
+        SELECT p."member_price", p."non_member_price", p."name"
+          FROM "EventPriceTiers" p
+         WHERE p."event_id" = e."id"
+           AND current_date BETWEEN p."starts_on" AND p."ends_on"
+         LIMIT 1
+      ) t ON TRUE
+     WHERE e."deletedAt" IS NULL
+       AND e."status" = ${EVENT_STATUS_PUBLISHED}
+       AND (${publicOnly}::boolean = false OR e."visibility" = ${EVENT_VISIBILITY_PUBLIC})
+       AND (${upcomingOnly}::boolean = false OR e."end_at" >= now())
+     ORDER BY e."start_at" ASC
+     LIMIT ${limit} OFFSET ${offset}
+  `);
+};
+
+/** Published, public events only — for visitors with no session. */
+export const listPublicEvents = (page: number, limit: number) =>
+  browseEvents(true, page, limit, true);
+
+/** Published events of both kinds — for a signed-in member. */
+export const listMemberEvents = (page: number, limit: number) =>
+  browseEvents(false, page, limit, true);
+
+/**
+ * One public event by slug, or null.
+ *
+ * Null rather than a forbidden error: a 403 confirms the event exists, and a
+ * members-only AGM should be indistinguishable from a mistyped URL.
+ */
+export const findPublicEventBySlug = (db: Db, slug: string) =>
+  db.event.findFirst({
+    where: {
+      slug,
+      deletedAt: null,
+      status: EVENT_STATUS_PUBLISHED,
+      visibility: EVENT_VISIBILITY_PUBLIC,
+    },
+    include: { price_tiers: { orderBy: [{ display_order: 'asc' }, { starts_on: 'asc' }] } },
+  });
+
+/** One published event of either visibility, for a signed-in member. */
+export const findMemberEventBySlug = (db: Db, slug: string) =>
+  db.event.findFirst({
+    where: { slug, deletedAt: null, status: EVENT_STATUS_PUBLISHED },
+    include: { price_tiers: { orderBy: [{ display_order: 'asc' }, { starts_on: 'asc' }] } },
+  });

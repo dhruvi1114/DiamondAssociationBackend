@@ -5,6 +5,7 @@ import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { prisma } from '@db/prisma';
 import { writeAudit } from '@helpers/audit';
 import { EVENT_STATUS } from '@modules/event/event.constants';
+import { resolveTier } from '@modules/event/event.pricing';
 import * as repo from '@modules/event/event.repository';
 import { AppError } from '@utils/appError';
 import type {
@@ -13,6 +14,7 @@ import type {
   UpdateEventInput,
 } from '@modules/event/event.types';
 import type { Db } from '@db/prisma';
+import type { PriceTier } from '@modules/event/event.pricing';
 
 /** Who performed the action, for audit attribution. */
 export interface EventActor {
@@ -270,4 +272,144 @@ export const cancelEvent = async (id: bigint, input: { reason: string }, actor: 
 
     return { id: updated.id.toString(), status: updated.status };
   });
+};
+
+/* --- browsing: public and member ------------------------------------------ */
+
+/** How many seats are still sellable, or null when the event is uncapped. */
+const seatsLeft = (capacity: number | null, taken: number): number | null =>
+  capacity === null ? null : Math.max(0, capacity - taken);
+
+/**
+ * Is the Register button live right now?
+ *
+ * Four independent reasons it might not be, and the page says which — a disabled
+ * button with no reason is the version people phone the office about.
+ */
+const registrationState = (
+  event: {
+    registration_opens_at: Date | null;
+    registration_closes_at: Date | null;
+    capacity: number | null;
+    seats_taken: number;
+  },
+  tier: PriceTier | null,
+  now: Date,
+) => {
+  if (event.registration_opens_at && now < event.registration_opens_at) {
+    return { open: false, reason: 'NOT_OPEN_YET' as const };
+  }
+
+  if (event.registration_closes_at && now > event.registration_closes_at) {
+    return { open: false, reason: 'CLOSED' as const };
+  }
+
+  if (seatsLeft(event.capacity, event.seats_taken) === 0) {
+    return { open: false, reason: 'SOLD_OUT' as const };
+  }
+
+  // No tier covers today, so there is no price. Refusing is the only honest
+  // answer; inventing a fallback is how billing disputes start.
+  if (!tier) return { open: false, reason: 'NO_PRICE_TODAY' as const };
+
+  return { open: true, reason: null };
+};
+
+const browseRow = (row: repo.BrowseEventRow) => ({
+  id: row.id.toString(),
+  slug: row.slug,
+  title: row.title,
+  start_at: row.start_at,
+  end_at: row.end_at,
+  venue_name: row.venue_name,
+  city: row.city,
+  visibility: row.visibility,
+  seats_left: seatsLeft(row.capacity, row.seats_taken),
+  registration_closes_at: row.registration_closes_at,
+  tier_name: row.tier_name,
+  member_price: row.member_price?.toFixed(2) ?? null,
+  non_member_price: row.non_member_price?.toFixed(2) ?? null,
+});
+
+const paged = (rows: repo.BrowseEventRow[]) => ({
+  rows: rows.map(browseRow),
+  total: rows.length > 0 ? Number(rows[0].total) : 0,
+});
+
+/** Published public events, for a visitor with no session. */
+export const listPublicEvents = async (query: { page: number; limit: number }) =>
+  paged(await repo.listPublicEvents(query.page, query.limit));
+
+/** Published events of both kinds, for a signed-in member. */
+export const listMemberEvents = async (query: { page: number; limit: number }) =>
+  paged(await repo.listMemberEvents(query.page, query.limit));
+
+/** The shared detail shape: the whole tier table plus what applies today. */
+const eventDetail = (
+  event: NonNullable<Awaited<ReturnType<typeof repo.findEventById>>>,
+  now: Date,
+) => {
+  const tier = resolveTier(event.price_tiers as PriceTier[], now);
+  const state = registrationState(event, tier, now);
+
+  return {
+    id: event.id.toString(),
+    slug: event.slug,
+    title: event.title,
+    description: event.description,
+    banner_path: event.banner_path,
+    start_at: event.start_at,
+    end_at: event.end_at,
+    venue_name: event.venue_name,
+    venue_address_line1: event.venue_address_line1,
+    venue_address_line2: event.venue_address_line2,
+    city: event.city,
+    state: event.state,
+    pincode: event.pincode,
+    country: event.country,
+    map_url: event.map_url,
+    visibility: event.visibility,
+    capacity: event.capacity,
+    seats_left: seatsLeft(event.capacity, event.seats_taken),
+    registration_opens_at: event.registration_opens_at,
+    registration_closes_at: event.registration_closes_at,
+    requires_approval: event.requires_approval,
+    collects: {
+      food_preference: event.collect_food_preference,
+      photo: event.collect_photo,
+      gov_id: event.collect_gov_id,
+    },
+    price_tiers: event.price_tiers.map((row) => ({
+      name: row.name,
+      starts_on: row.starts_on,
+      ends_on: row.ends_on,
+      member_price: row.member_price.toFixed(2),
+      non_member_price: row.non_member_price.toFixed(2),
+    })),
+    // Null, not a fallback price, when no tier covers today.
+    current_price: tier
+      ? {
+          tier_name: tier.name,
+          applies_until: tier.ends_on,
+          member_price: tier.member_price.toFixed(2),
+          non_member_price: tier.non_member_price.toFixed(2),
+        }
+      : null,
+    registration_open: state.open,
+    registration_blocked_reason: state.reason,
+  };
+};
+
+/** One public event by slug, or null when it is not the public's to see. */
+export const getPublicEvent = async (slug: string, now = new Date()) => {
+  const event = await repo.findPublicEventBySlug(prisma, slug);
+
+  return event ? eventDetail(event, now) : null;
+};
+
+/** One published event by slug for a signed-in member, either visibility. */
+export const getMemberEvent = async (slug: string, now = new Date()) => {
+  const event = await repo.findMemberEventBySlug(prisma, slug);
+
+  return event ? eventDetail(event, now) : null;
 };
