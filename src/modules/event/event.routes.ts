@@ -4,6 +4,7 @@ import { authenticate, authenticateAdmin, authorize, validateRequest } from '@mi
 import * as controller from '@modules/event/event.controller';
 import {
   listRegistrationsSchema,
+  registerAsGuestSchema,
   registerAsMemberSchema,
   rejectPaymentSchema,
   rejectRegistrationSchema,
@@ -118,6 +119,21 @@ export const eventPublicRouter = Router();
 
 eventPublicRouter.get(END_POINTS.EVENTS, controller.listPublicEvents);
 eventPublicRouter.get(`${END_POINTS.EVENTS}/:slug`, controller.getPublicEvent);
+
+eventPublicRouter.post(
+  `${END_POINTS.EVENTS}/:slug/register`,
+  validateRequest({ body: registerAsGuestSchema }),
+  controller.registerAsGuest,
+);
+
+// The token IS the credential, so these carry no session and no id in the path.
+eventPublicRouter.get(`${END_POINTS.EVENTS}/booking/:token`, controller.getGuestBooking);
+
+eventPublicRouter.post(
+  `${END_POINTS.EVENTS}/booking/:token/payment`,
+  validateRequest({ body: submitPaymentSchema }),
+  controller.submitGuestPayment,
+);
 
 /** `/api/v1/events` — the member's event list (C-24). */
 export const eventMemberRouter = Router();

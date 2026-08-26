@@ -306,3 +306,22 @@ export const CLAIMABLE_METHODS = [
   SUBMISSION_METHOD.UPI,
   SUBMISSION_METHOD.CHEQUE,
 ] as const;
+
+/**
+ * A guest submits payment for their own booking, reached by their emailed link.
+ *
+ * The link is the credential — resolved by the caller — so there is no user id
+ * to attribute the claim to. Both actor columns stay null, which the audit row
+ * records as SYSTEM; who actually paid is on the booking, not on the claim.
+ */
+export const submitGuestPayment = async (
+  registrationId: bigint,
+  input: SubmitPaymentInput,
+  request: { ip: string | null; userAgent: string | null; requestId: string | null },
+) =>
+  submitPayment(registrationId, input, {
+    userId: null,
+    ip: request.ip,
+    userAgent: request.userAgent,
+    requestId: request.requestId,
+  });

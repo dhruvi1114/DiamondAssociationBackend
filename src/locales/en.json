@@ -209,7 +209,8 @@
     "submissionDecided": "That payment claim has already been decided",
     "paymentSubmitted": "Payment details received. We will confirm once verified.",
     "paymentVerified": "Payment verified",
-    "paymentRejected": "Payment claim rejected"
+    "paymentRejected": "Payment claim rejected",
+    "bookingLinkInvalid": "That booking link is no longer valid"
   },
   "communication": {
     "noticeNotFound": "Notice not found",

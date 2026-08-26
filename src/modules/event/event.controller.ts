@@ -8,6 +8,7 @@ import { AppError } from '@utils/appError';
 import { handleApiResponse } from '@utils/handleResponse';
 import { prisma } from '@db/prisma';
 import * as memberRepo from '@modules/member/member.repository';
+import { resolveEventAccessToken } from '@modules/event/registration.tokens';
 
 /**
  * HTTP layer for events.
@@ -375,6 +376,67 @@ export const rejectPayment = handler(async (req, res) => {
   handleApiResponse(res, {
     responseType: RES_STATUS.UPDATE,
     messageKey: 'event.paymentRejected',
+    data: serialise(result),
+  });
+});
+
+/* --- guests: booking without an account ------------------------------------- */
+
+/** `POST /public/events/:slug/register` — a non-member books a seat. No session. */
+export const registerAsGuest = handler(async (req, res) => {
+  const booking = await registration.registerAsGuest(req.params.slug as string, req.body as never, {
+    ip: req.ip ?? null,
+    userAgent: req.get('user-agent') ?? null,
+    requestId: req.requestId ?? null,
+  });
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.CREATE,
+    messageKey: 'event.registered',
+    data: serialise(booking),
+  });
+});
+
+/**
+ * The booking a guest link opens, or 404.
+ *
+ * Every failure — unknown, expired, revoked, malformed — is the same 404.
+ * Distinguishing them would tell whoever is guessing which guesses were close.
+ */
+const resolveBooking = async (token: string): Promise<bigint> => {
+  const id = await resolveEventAccessToken(prisma, token);
+
+  if (id === null) {
+    throw new AppError({
+      errorType: ERROR_TYPES.NOT_FOUND,
+      messageKey: 'event.bookingLinkInvalid',
+    });
+  }
+
+  return id;
+};
+
+/** `GET /public/events/booking/:token` — a guest looks at their own booking. */
+export const getGuestBooking = handler(async (req, res) => {
+  const id = await resolveBooking(req.params.token as string);
+  const booking = await registration.getBookingSummary(id);
+
+  handleApiResponse(res, { responseType: RES_STATUS.GET, data: serialise(booking) });
+});
+
+/** `POST /public/events/booking/:token/payment` — a guest says they have paid. */
+export const submitGuestPayment = handler(async (req, res) => {
+  const id = await resolveBooking(req.params.token as string);
+
+  const result = await eventPayment.submitGuestPayment(id, req.body as never, {
+    ip: req.ip ?? null,
+    userAgent: req.get('user-agent') ?? null,
+    requestId: req.requestId ?? null,
+  });
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.CREATE,
+    messageKey: 'event.paymentSubmitted',
     data: serialise(result),
   });
 });

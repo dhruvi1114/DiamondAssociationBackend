@@ -109,3 +109,38 @@ export const rejectPaymentSchema = z.object({
 });
 
 export type RejectPaymentInput = z.infer<typeof rejectPaymentSchema>;
+
+/**
+ * Body of `POST /public/events/:slug/register` — a non-member booking a seat.
+ *
+ * Everything is typed by the guest, because the platform holds nothing about
+ * them to pre-fill. The address and GST fields are here because they go on the
+ * invoice, not because the event needs them.
+ */
+export const registerAsGuestSchema = z.object({
+  full_name: z.string().trim().min(2).max(150),
+  designation: z.string().trim().max(100).optional(),
+  company_name: z.string().trim().max(200).optional(),
+  email: z.string().trim().toLowerCase().email().max(200),
+  phone: z.string().trim().min(6).max(20),
+  gst_number: z.string().trim().max(20).optional(),
+  pan_number: z.string().trim().max(10).optional(),
+  line1: z.string().trim().max(200).optional(),
+  line2: z.string().trim().max(200).optional(),
+  city: z.string().trim().max(100).optional(),
+  state: z.string().trim().max(100).optional(),
+  pincode: z.string().trim().max(10).optional(),
+  country: z.string().trim().max(100).default('India'),
+  food_preference: z
+    .union([
+      z.literal(FOOD_PREFERENCE.VEG),
+      z.literal(FOOD_PREFERENCE.NON_VEG),
+      z.literal(FOOD_PREFERENCE.JAIN),
+    ])
+    .optional(),
+  special_requirement: z.string().trim().max(500).optional(),
+  terms_accepted: z.literal(true),
+  media_consent: z.boolean().default(false),
+});
+
+export type RegisterAsGuestInput = z.infer<typeof registerAsGuestSchema>;

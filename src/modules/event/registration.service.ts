@@ -18,10 +18,15 @@ import {
 } from '@modules/event/registration.constants';
 import * as seats from '@modules/event/registration.repository';
 import { touchedByAdmin } from '@modules/event/actorColumns';
+import { bookingLinkFor, issueEventAccessToken } from '@modules/event/registration.tokens';
 import { AppError } from '@utils/appError';
 import type { Db } from '@db/prisma';
 import type { PriceTier } from '@modules/event/event.pricing';
-import type { AttendeeInput, RegisterAsMemberInput } from '@modules/event/registration.types';
+import type {
+  AttendeeInput,
+  RegisterAsGuestInput,
+  RegisterAsMemberInput,
+} from '@modules/event/registration.types';
 
 /**
  * Making a booking.
@@ -567,5 +572,234 @@ export const listAttendees = async (query: {
       unit_price: row.unit_price.toFixed(2),
     })),
     total: rows.length > 0 ? Number(rows[0].total) : 0,
+  };
+};
+
+/* --- a non-member books a seat --------------------------------------------- */
+
+/**
+ * A guest registers for a public event.
+ *
+ * One seat, for themselves. A non-member booking a block of seats for other
+ * people is a different thing — a company booking without a membership — and
+ * nothing in the spec asks for it, so it is not invented here.
+ *
+ * A members-only event refuses outright, and does so as "not found": the guest
+ * routes never reveal that a members-only event exists.
+ *
+ * The guest gets a login-free link to their booking, because they have no
+ * account and still have to pay.
+ */
+export const registerAsGuest = async (
+  slug: string,
+  input: RegisterAsGuestInput,
+  request: { ip: string | null; userAgent: string | null; requestId: string | null },
+  now = new Date(),
+) => {
+  // The public finder already filters to PUBLISHED and PUBLIC, so a members-only
+  // event is absent rather than forbidden.
+  const event = await eventRepo.findPublicEventBySlug(prisma, slug);
+
+  if (!event) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'event.notFound' });
+  }
+
+  const refusal = bookingRefusal(event, now);
+
+  if (refusal) throw conflict(refusal);
+
+  const graceDays = await getNumericSetting(SETTING_KEYS.MEMBERSHIP_GRACE_DAYS, DEFAULT_GRACE_DAYS);
+
+  const priced = priceBooking({
+    tiers: event.price_tiers as PriceTier[],
+    on: now,
+    seats: 1,
+    taxRate: event.tax_rate,
+    // No membership at all, so the non-member price applies whatever the grace
+    // period says.
+    membershipValidTill: null,
+    graceDays,
+  });
+
+  if (!priced) throw conflict('event.noPriceToday');
+
+  const expiresAt = await holdDeadline(now);
+
+  return prisma.$transaction(async (tx) => {
+    const taken = await seats.takeSeats(tx, event.id, 1);
+
+    if (taken === null) throw conflict('event.soldOut');
+
+    const guest = await tx.guestRegistrant.create({
+      data: {
+        full_name: input.full_name,
+        designation: input.designation ?? null,
+        company_name: input.company_name ?? null,
+        email: input.email,
+        phone: input.phone,
+        gst_number: input.gst_number ?? null,
+        pan_number: input.pan_number ?? null,
+        line1: input.line1 ?? null,
+        line2: input.line2 ?? null,
+        city: input.city ?? null,
+        state: input.state ?? null,
+        pincode: input.pincode ?? null,
+        country: input.country,
+      },
+    });
+
+    const needsApproval = event.requires_approval;
+    const status = needsApproval
+      ? REGISTRATION_STATUS.PENDING_APPROVAL
+      : priced.isFree
+        ? REGISTRATION_STATUS.CONFIRMED
+        : REGISTRATION_STATUS.PENDING_PAYMENT;
+
+    const invoice =
+      needsApproval || priced.isFree
+        ? null
+        : await raiseEventInvoice(tx, {
+            memberId: null,
+            guestRegistrantId: guest.id,
+            issueDate: now,
+            dueDate: expiresAt,
+            eventTitle: event.title,
+            tierName: priced.tier.name,
+            seats: 1,
+            unitPrice: priced.unitPrice,
+            subtotal: priced.subtotal,
+            taxRate: event.tax_rate,
+            taxAmount: priced.taxAmount,
+            total: priced.total,
+          });
+
+    const registrationCode = await nextRegistrationCode(tx, now);
+
+    const registration = await tx.eventRegistration.create({
+      data: {
+        event_id: event.id,
+        registrant_type: REGISTRANT_TYPE.GUEST,
+        guest_registrant_id: guest.id,
+        registration_code: registrationCode,
+        status,
+        attendee_count: 1,
+        price_tier_id: priced.tier.id,
+        subtotal: priced.subtotal,
+        tax_amount: priced.taxAmount,
+        total_amount: priced.total,
+        invoice_id: invoice?.id ?? null,
+        expires_at: status === REGISTRATION_STATUS.CONFIRMED ? null : expiresAt,
+        terms_accepted_at: now,
+        terms_version: event.terms_version,
+        media_consent: input.media_consent,
+        billing_company_name: input.company_name ?? input.full_name,
+        gst_number: input.gst_number ?? null,
+        pan_number: input.pan_number ?? null,
+        billing_line1: input.line1 ?? null,
+        billing_line2: input.line2 ?? null,
+        billing_city: input.city ?? null,
+        billing_state: input.state ?? null,
+        billing_pincode: input.pincode ?? null,
+        billing_country: input.country,
+        contact_name: input.full_name,
+        contact_email: input.email,
+        contact_phone: input.phone,
+        registered_at: now,
+      },
+    });
+
+    await tx.eventRegistrationAttendee.create({
+      data: {
+        registration_id: registration.id,
+        attendee_code: `${registrationCode}-01`,
+        full_name: input.full_name,
+        designation: input.designation ?? null,
+        email: input.email,
+        phone: input.phone,
+        unit_price: priced.unitPrice,
+        food_preference: event.collect_food_preference ? (input.food_preference ?? null) : null,
+        special_requirement: input.special_requirement ?? null,
+      },
+    });
+
+    // Their only way back to this booking. Issued inside the transaction so a
+    // link is never emailed for a booking that then rolled back.
+    const token = await issueEventAccessToken(tx, registration.id, now);
+
+    await writeAudit(tx, {
+      action: AUDIT_ACTIONS.EVENT_REGISTERED,
+      entityName: 'EventRegistrations',
+      entityId: registration.id,
+      actorType: ACTOR_TYPES.SYSTEM,
+      after: {
+        event_id: event.id.toString(),
+        guest_email: input.email,
+        total: priced.total.toFixed(2),
+        status,
+      },
+      ip: request.ip,
+      userAgent: request.userAgent,
+      requestId: request.requestId,
+    });
+
+    return {
+      id: registration.id.toString(),
+      registration_code: registrationCode,
+      status,
+      total_amount: priced.total.toFixed(2),
+      tier_name: priced.tier.name,
+      invoice_number: invoice?.invoice_number ?? null,
+      expires_at: status === REGISTRATION_STATUS.CONFIRMED ? null : expiresAt,
+      booking_link: bookingLinkFor(token),
+    };
+  });
+};
+
+/**
+ * One booking, as the person who made it should see it.
+ *
+ * Narrower than the admin view on purpose: it carries what the booker needs to
+ * act — what they owe, by when, and who is going — and nothing about the
+ * association's own handling of it.
+ */
+export const getBookingSummary = async (id: bigint) => {
+  const booking = await prisma.eventRegistration.findFirst({
+    where: { id, deletedAt: null },
+    include: {
+      event: { select: { title: true, slug: true, start_at: true, venue_name: true, city: true } },
+      attendees: { orderBy: { id: 'asc' } },
+      invoice: {
+        select: { invoice_number: true, status: true, total_amount: true, due_date: true },
+      },
+    },
+  });
+
+  if (!booking) {
+    throw new AppError({
+      errorType: ERROR_TYPES.NOT_FOUND,
+      messageKey: 'event.registrationNotFound',
+    });
+  }
+
+  return {
+    registration_code: booking.registration_code,
+    status: booking.status,
+    event: booking.event,
+    total_amount: booking.total_amount.toFixed(2),
+    expires_at: booking.expires_at,
+    invoice: booking.invoice
+      ? {
+          invoice_number: booking.invoice.invoice_number,
+          status: booking.invoice.status,
+          total_amount: booking.invoice.total_amount.toFixed(2),
+          due_date: booking.invoice.due_date,
+        }
+      : null,
+    attendees: booking.attendees.map((person) => ({
+      attendee_code: person.attendee_code,
+      full_name: person.full_name,
+      designation: person.designation,
+      unit_price: person.unit_price.toFixed(2),
+    })),
   };
 };
