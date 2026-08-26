@@ -1,0 +1,179 @@
+/// An association event: meeting, seminar, expo.
+///
+/// Created as a draft, published to an audience, and priced through
+/// `EventPriceTiers` rather than a fee column — the price depends on when you
+/// book and on whether you are a member, so a single number cannot express it.
+///
+/// Enum columns are `smallint` codes, the convention for tables created from M7
+/// onward. Codes are append-only.
+model Event {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// URL-safe identifier used in public links, so a link never exposes a row id
+  /// and nobody can count the association's events by incrementing a number.
+  slug String @unique @db.VarChar(160)
+
+  /// Shown wherever the event is listed.
+  title String @db.VarChar(200)
+
+  /// Long description, rendered on the detail page.
+  description String? @db.Text
+
+  /// Storage key of the banner image, through `@helpers/storage`.
+  banner_path String? @db.Text
+
+  /// Event start (UTC).
+  start_at DateTime @db.Timestamptz(6)
+
+  /// Event end (UTC). CHECK end_at > start_at.
+  end_at DateTime @db.Timestamptz(6)
+
+  /// Venue name as it appears on the invitation.
+  venue_name String? @db.VarChar(200)
+
+  /// Street address, line 1.
+  venue_address_line1 String? @db.VarChar(200)
+
+  /// Street address, line 2.
+  venue_address_line2 String? @db.VarChar(200)
+
+  /// City. Free text rather than an FK to Cities: a venue may sit outside the
+  /// master list, and this is a printed address, not a searchable dimension.
+  city String? @db.VarChar(100)
+
+  /// State.
+  state String? @db.VarChar(100)
+
+  /// Postal code.
+  pincode String? @db.VarChar(10)
+
+  /// Country.
+  country String @default("India") @db.VarChar(100)
+
+  /// Optional map link shown on the detail page.
+  map_url String? @db.Text
+
+  /// 0 = MEMBER_ONLY, 1 = PUBLIC. Member-only events are absent from every
+  /// public query rather than fetched and hidden — a 403 would confirm they exist.
+  visibility Int @default(0) @db.SmallInt
+
+  /// 0 = DRAFT, 1 = PUBLISHED, 2 = CANCELLED, 3 = COMPLETED.
+  status Int @default(0) @db.SmallInt
+
+  /// GST or other tax applied on top of the tier price, percent, 2dp.
+  tax_rate Decimal @default(0) @db.Decimal(5, 2)
+
+  /// Total seats. NULL means unlimited.
+  capacity Int?
+
+  /// Seats consumed by live registrations. Maintained by one guarded UPDATE
+  /// inside the registration transaction, never by read-then-write, so
+  /// simultaneous bookings cannot oversell the room.
+  seats_taken Int @default(0)
+
+  /// When registration opens. NULL means "as soon as it is published".
+  registration_opens_at DateTime? @db.Timestamptz(6)
+
+  /// When registration closes. CHECK it is on or before the event starts.
+  registration_closes_at DateTime? @db.Timestamptz(6)
+
+  /// When true, a registration waits for admin approval before an invoice
+  /// exists. Off by default; used for AGMs and vetted delegations.
+  requires_approval Boolean @default(false)
+
+  /// Collect Veg/Non-veg/Jain per delegate.
+  collect_food_preference Boolean @default(true)
+
+  /// Collect a badge photo per delegate.
+  collect_photo Boolean @default(false)
+
+  /// Collect a government ID per delegate.
+  collect_gov_id Boolean @default(false)
+
+  /// Version of the terms shown at booking. Stored on each registration too, so
+  /// an old booking still proves which policy the payer actually accepted.
+  terms_version String @default("v1") @db.VarChar(20)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Member login that created this row. Always NULL today; events are staff-made.
+  created_by_user_id BigInt?
+
+  /// Staff account that created this row.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Member login that last changed this row.
+  updated_by_user_id BigInt?
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// Soft-delete timestamp (UTC). NULL means live; all reads filter on it.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The price windows for this event.
+  price_tiers EventPriceTier[]
+
+  @@index([status, visibility, start_at])
+  @@map("Events")
+}
+
+/// One price window for one event.
+///
+/// Two prices per row — member and non-member — and an exclusion constraint
+/// guarantees the windows never overlap, so "which price applies today" always
+/// has exactly one answer instead of depending on row order.
+model EventPriceTier {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Events.id. ON DELETE CASCADE — a tier is meaningless without its event.
+  event_id BigInt
+
+  /// Label shown to the buyer: "Early bird", "Regular", "Late".
+  name String @db.VarChar(60)
+
+  /// First day this price applies, inclusive.
+  starts_on DateTime @db.Date
+
+  /// Last day this price applies, inclusive — a tier runs to the end of its last day.
+  ends_on DateTime @db.Date
+
+  /// Price per delegate for a member, INR, 2dp. 0 for a free event.
+  member_price Decimal @db.Decimal(14, 2)
+
+  /// Price per delegate for everyone else, INR, 2dp.
+  non_member_price Decimal @db.Decimal(14, 2)
+
+  /// Ordering on the admin form and the public price table.
+  display_order Int @default(0)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Member login that created this row. Always NULL today.
+  created_by_user_id BigInt?
+
+  /// Staff account that created this row.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Member login that last changed this row.
+  updated_by_user_id BigInt?
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// The event priced.
+  event Event @relation(fields: [event_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([event_id, starts_on])
+  @@map("EventPriceTiers")
+}
