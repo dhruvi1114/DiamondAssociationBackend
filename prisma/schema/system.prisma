@@ -1,0 +1,146 @@
+/// Who performed an audited action. SYSTEM covers scheduled jobs and webhook-driven changes,
+/// which alter business records with no human actor.
+enum ActorType {
+  MEMBER
+  ADMIN
+  SYSTEM
+}
+
+/// How the text in SystemSettings.value should be parsed by the settings service.
+enum SettingValueType {
+  STRING
+  NUMBER
+  BOOLEAN
+  JSON
+}
+
+/// Outcome of one scheduled job execution. RUNNING is written at start and replaced on exit;
+/// a row left RUNNING means the process died mid-job.
+enum JobRunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+/// Append-only business audit trail: who changed which record, from what to what
+/// (observability.md §1 — audit is not logging; logs rotate away, these rows are retained).
+/// UPDATE and DELETE are revoked from the application database role on this table.
+model AuditLog {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Audience the actor belonged to: MEMBER, ADMIN or SYSTEM.
+  actor_type ActorType
+
+  /// Users.id or AdminUsers.id depending on actor_type, NULL for SYSTEM. Deliberately NOT a
+  /// foreign key: an audit row must survive deletion of its actor (ADR-006, the one
+  /// documented soft reference — no join is ever performed on it).
+  actor_id BigInt?
+
+  /// What happened, as "<entity>.<past-tense-verb>", e.g. application.approved. Vocabulary
+  /// lives in src/constant/audit.constant.ts so the audit screen can enumerate it.
+  action String @db.VarChar(80)
+
+  /// Table name of the subject, e.g. Members. Soft reference, paired with entity_id.
+  entity_name String @db.VarChar(60)
+
+  /// Primary key of the subject row. Soft reference — no FK, so the audit outlives the subject.
+  entity_id BigInt?
+
+  /// Subject's relevant fields before the change, or NULL for a create. Only the fields that
+  /// changed; never document contents, password hashes or tokens.
+  before_json Json?
+
+  /// Subject's relevant fields after the change, or NULL for a delete.
+  after_json Json?
+
+  /// Client IP the change came from, as seen after trust-proxy resolution. NULL for jobs.
+  ip String? @db.Inet
+
+  /// Client user-agent string, truncated by the caller. NULL for jobs.
+  user_agent String? @db.Text
+
+  /// Correlation id of the request that caused the change, matching the requestId in the
+  /// application logs (observability.md §2). NULL for jobs with no request.
+  request_id String? @db.VarChar(64)
+
+  /// Row creation timestamp (UTC) — when the audited action happened. This table has no
+  /// updatedAt and no deletedAt by design: rows are never modified or removed.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([entity_name, entity_id, createdAt(sort: Desc)])
+  @@index([actor_type, actor_id, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("AuditLogs")
+}
+
+/// One runtime-configurable setting. Values live here rather than in env so an admin can
+/// change them without a deploy; anything that is a secret stays in env and never appears here.
+model SystemSetting {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Dotted machine key, e.g. notification.email_enabled. Unique; read by code, never by label.
+  key String @unique @db.VarChar(80)
+
+  /// The value as text. Always parse it through value_type — never assume the shape.
+  value String @db.Text
+
+  /// How to parse value: STRING, NUMBER, BOOLEAN or JSON.
+  value_type SettingValueType @default(STRING)
+
+  /// Screen grouping for the settings UI, e.g. notification, billing.
+  group String @db.VarChar(50)
+
+  /// What this setting controls and what changing it affects, shown as help text.
+  description String? @db.Text
+
+  /// TRUE means safe to expose to unauthenticated frontends. Anything with operational or
+  /// commercial sensitivity stays FALSE.
+  is_public Boolean @default(false)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([group])
+  @@map("SystemSettings")
+}
+
+/// One execution of one scheduled job (observability.md §1) — the evidence that answers
+/// "did the nightly work actually run?". A missing row is as much a failure signal as a
+/// FAILED one.
+model JobRun {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Registered job identifier, e.g. notification.drain. Matches the name in src/jobs.
+  job_name String @db.VarChar(80)
+
+  /// When this execution started (UTC).
+  started_at DateTime @default(now()) @db.Timestamptz(6)
+
+  /// When it finished (UTC). NULL while running, or forever if the process died mid-job.
+  finished_at DateTime? @db.Timestamptz(6)
+
+  /// RUNNING, SUCCESS or FAILED. Written RUNNING at start and replaced exactly once on exit.
+  status JobRunStatus @default(RUNNING)
+
+  /// How many items the run handled — notifications drained, rows pruned. 0 is a normal,
+  /// healthy result for a sweep with nothing to do.
+  processed_count Int @default(0)
+
+  /// Failure detail for a FAILED run: message only, never a stack trace or SQL.
+  error String? @db.Text
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC) — set when the run is finalised.
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([job_name, started_at(sort: Desc)])
+  @@map("JobRuns")
+}

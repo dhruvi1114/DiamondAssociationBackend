@@ -1,0 +1,128 @@
+/// Delivery channel for a notification. IN_APP has no external provider — the row itself is
+/// the member's bell-feed item (notification-architecture.md §6).
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+  IN_APP
+}
+
+/// Outbox lifecycle. QUEUED → SENDING → SENT, or → FAILED after the retry budget is spent.
+/// CANCELLED is an administrative stop for a row that should no longer go out.
+enum NotificationStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+/// The authored content for one message, per channel and locale. Content lives in rows rather
+/// than in code so the association can reword a message without a deploy
+/// (notification-architecture.md §4).
+model NotificationTemplate {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Message identifier, e.g. auth.signup_otp. Services queue by this code, so it is a
+  /// contract and is never renamed once released.
+  code String @db.VarChar(80)
+
+  /// Channel this rendering is for: EMAIL, WHATSAPP or IN_APP. The same code exists once per
+  /// channel because an SMS and an email say the same thing at very different lengths.
+  channel NotificationChannel
+
+  /// BCP-47-ish language tag, matching APP_LANGUAGES. Defaults to en.
+  locale String @default("en") @db.VarChar(10)
+
+  /// Email subject line, with {{placeholders}}. NULL for channels that have no subject.
+  subject String? @db.VarChar(200)
+
+  /// Message body with {{placeholders}} substituted from Notifications.payload_json. Plain
+  /// text or simple HTML; never rendered with dangerouslySetInnerHTML on the client.
+  body String @db.Text
+
+  /// Soft on/off switch used instead of deletion so historic references stay resolvable.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([code, channel, locale])
+  @@map("NotificationTemplates")
+}
+
+/// The notification outbox (ADR-010/ADR-015): one row per message per recipient per channel.
+/// Services INSERT here inside the same transaction as the business change and never call a
+/// provider inline, so a dead mail server can never roll back an approval. A drain job
+/// dispatches, retries with backoff, and gives up visibly rather than silently.
+model Notification {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Users.id — the member recipient. ON DELETE CASCADE. NULL when the recipient is
+  /// staff. Exactly one of user_id / admin_user_id is set.
+  user_id BigInt?
+
+  /// FK to AdminUsers.id — the staff recipient. ON DELETE CASCADE. NULL for member messages.
+  admin_user_id BigInt?
+
+  /// Members.id this message concerns, for filtering an organisation's message history.
+  /// Column exists from M0; the foreign key is added in M3 with the Members table, because
+  /// the outbox is built before the membership model (ADR-015).
+  member_id BigInt?
+
+  /// Delivery channel: EMAIL, WHATSAPP or IN_APP.
+  channel NotificationChannel
+
+  /// NotificationTemplates.code to render. Resolved at drain time with channel + locale, so
+  /// a reworded template applies to messages already queued.
+  template_code String @db.VarChar(80)
+
+  /// Template variables, e.g. {"full_name":"…","otp":"…"}. Documented JSON use: these are
+  /// per-message substitutions, not relational data. Never logged — it can hold an OTP.
+  payload_json Json
+
+  /// Resolved destination: email address, or phone number for WhatsApp. NULL for IN_APP,
+  /// which has no address. Snapshotted at queue time so a later profile edit cannot silently
+  /// redirect a message that has already been raised.
+  to_address String? @db.VarChar(200)
+
+  /// Outbox state: QUEUED, SENDING, SENT, FAILED, CANCELLED.
+  status NotificationStatus @default(QUEUED)
+
+  /// Delivery attempts made so far. The drain gives up at 5 (notification-architecture.md §8).
+  attempt_count Int @default(0)
+
+  /// Earliest instant (UTC) this row may be picked up again — now + 2^attempt minutes after a
+  /// failure. Paired with status in the drain index; NULL means never retry.
+  next_attempt_at DateTime? @db.Timestamptz(6)
+
+  /// When the provider accepted the message (UTC). NULL until SENT.
+  sent_at DateTime? @db.Timestamptz(6)
+
+  /// Last failure reason, kept so a FAILED row in the admin outbox explains itself. Provider
+  /// message only; never a stack trace and never the rendered body.
+  error String? @db.Text
+
+  /// When the member opened this IN_APP item (UTC). NULL means unread; drives the bell badge.
+  /// Always NULL for EMAIL and WHATSAPP, which have no read signal.
+  read_at DateTime? @db.Timestamptz(6)
+
+  /// Row creation timestamp (UTC) — when the business event queued the message.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC) — bumped on every delivery attempt.
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  user       User?      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  admin_user AdminUser? @relation(fields: [admin_user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([status, next_attempt_at])
+  @@index([user_id, channel, read_at])
+  @@index([admin_user_id, channel, read_at])
+  @@index([member_id])
+  @@map("Notifications")
+}

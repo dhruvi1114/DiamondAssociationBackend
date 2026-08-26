@@ -1,0 +1,441 @@
+/// Lifecycle of a login account, for both members and staff. PENDING_APPROVAL is
+/// the state after public registration while admin review is pending; PENDING_VERIFICATION
+/// is used after approval until the member sets their first password.
+enum UserStatus {
+  /// Registered through the public form; awaiting admin approval. Cannot sign in.
+  PENDING_APPROVAL
+
+  /// Approved but first password not set yet, or legacy signup OTP pending.
+  PENDING_VERIFICATION
+
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+/// A member/applicant login account. Separate from AdminUsers so a member token can never
+/// address a staff route and RBAC never applies to the public side (ADR-002). One row per
+/// person who signs in on the customer portal; the organisation they represent is a Members
+/// row created later (M3).
+model User {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Login identifier. citext so "A@b.com" and "a@b.com" are the same account. Unique among
+  /// live rows only — the unique index is partial on deletedAt IS NULL so a deleted member
+  /// can re-register with the same address.
+  email String @db.Citext
+
+  /// Optional mobile number in E.164-ish form, used for OTP and WhatsApp. Unique where
+  /// present and not soft-deleted; NULL never collides.
+  phone String? @db.VarChar(20)
+
+  /// bcrypt hash, cost 12 (rbac.md §1). NULL until the member sets their first
+  /// password after admin approval. Never logged, never returned.
+  password_hash String? @db.Text
+
+  /// Person's name as they entered it, used in salutations and the approver's view.
+  full_name String @db.VarChar(150)
+
+  /// Account lifecycle. Only ACTIVE may sign in with a password.
+  status UserStatus @default(PENDING_APPROVAL)
+
+  /// When the signup OTP was accepted (UTC). NULL means the address is unproven.
+  email_verified_at DateTime? @db.Timestamptz(6)
+
+  /// Last successful sign-in (UTC). Dormant-account reporting; not an audit record.
+  last_login_at DateTime? @db.Timestamptz(6)
+
+  /// Consecutive failed sign-ins. Reset to 0 on success; 5 triggers the lockout (rbac.md §1).
+  failed_login_count Int @default(0)
+
+  /// Sign-in barred until this instant (UTC) after repeated failures. NULL means not locked.
+  locked_until DateTime? @db.Timestamptz(6)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  notifications Notification[]
+  auth_tokens   AuthToken[]
+  reset_tokens  PasswordResetToken[]
+
+  /// The company this login owns. NULL until they start a profile or application.
+  member          Member?                      @relation
+  /// Profile change requests this member raised.
+  change_requests MemberProfileChangeRequest[] @relation("ChangeRequestAuthor")
+
+  /// Membership applications this login filed.
+  applications MembershipApplication[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@map("Users")
+}
+
+/// A staff login account: association office, approvers and accounts. Held apart from Users
+/// so the two audiences have different credential policies, different token audiences and no
+/// escalation path between them (ADR-002).
+model AdminUser {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Login identifier, case-insensitive. Unique among live rows only (partial on deletedAt).
+  email String @db.Citext
+
+  /// Optional contact number for the staff member. Not a login factor and not unique.
+  phone String? @db.VarChar(20)
+
+  /// bcrypt hash, cost 12. Admin passwords have a 12-character minimum (rbac.md §1).
+  password_hash String @db.Text
+
+  /// Staff member's display name, shown on approval history and audit rows.
+  full_name String @db.VarChar(150)
+
+  /// Account lifecycle: PENDING_VERIFICATION, ACTIVE, INACTIVE, BLOCKED. Only ACTIVE may sign in.
+  status UserStatus @default(PENDING_VERIFICATION)
+
+  /// When this staff address was verified (UTC). NULL for accounts created directly by an admin.
+  email_verified_at DateTime? @db.Timestamptz(6)
+
+  /// Last successful sign-in (UTC).
+  last_login_at DateTime? @db.Timestamptz(6)
+
+  /// Consecutive failed sign-ins. Reset to 0 on success; 5 triggers the lockout.
+  failed_login_count Int @default(0)
+
+  /// Sign-in barred until this instant (UTC). NULL means not locked.
+  locked_until DateTime? @db.Timestamptz(6)
+
+  /// TRUE bypasses every permission check (rbac.md §2). Bypasses are themselves audited, and
+  /// only a super admin may grant this flag.
+  is_super_admin Boolean @default(false)
+
+  /// FK to AdminUsers.id — the staff member who created this account. ON DELETE SET NULL:
+  /// removing a creator must never remove the accounts they set up.
+  created_by_admin_id BigInt?
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  created_by     AdminUser?           @relation("AdminUserCreatedBy", fields: [created_by_admin_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  created_admins AdminUser[]          @relation("AdminUserCreatedBy")
+  roles          AdminUserRole[]      @relation("AdminUserRoleHolder")
+  roles_assigned AdminUserRole[]      @relation("AdminUserRoleAssigner")
+  notifications  Notification[]
+  auth_tokens    AuthToken[]
+  reset_tokens   PasswordResetToken[]
+
+  /// KYC documents this staff member verified or rejected.
+  verified_documents      MemberDocument[]             @relation("MemberDocumentVerifier")
+  /// Profile change requests this staff member decided.
+  decided_change_requests MemberProfileChangeRequest[] @relation("ChangeRequestDecider")
+  /// Member status transitions this staff member made.
+  member_status_changes   MemberStatusHistory[]        @relation("MemberStatusActor")
+
+  /// Application evidence this staff member verified or rejected.
+  verified_application_documents ApplicationDocument[] @relation("ApplicationDocumentVerifier")
+
+  /// Approval decisions this staff member took.
+  approval_actions ApprovalAction[] @relation("ApprovalActor")
+
+  /// Invoices this staff member raised by hand.
+  invoices_created Invoice[] @relation("InvoiceCreator")
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([created_by_admin_id])
+  @@map("AdminUsers")
+}
+
+/// A named bundle of permissions granted to staff. Seeded set: SUPER_ADMIN, ADMIN, APPROVER,
+/// ACCOUNTS (rbac.md §3). Approval stages point at a role, so a role is also the unit that
+/// decides who may act on a queue.
+model Role {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Stable machine code, e.g. SUPER_ADMIN. Referenced by seeds and approval stages, so it is
+  /// never renamed once released.
+  code String @unique @db.VarChar(50)
+
+  /// Human label shown in the admin UI.
+  name String @db.VarChar(100)
+
+  /// What this role is for, shown as help text on the role screen.
+  description String? @db.Text
+
+  /// TRUE for the four seeded roles: they may be re-granted but never renamed or deleted,
+  /// because approval workflows and seeds resolve them by code.
+  is_system Boolean @default(false)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  permissions RolePermission[]
+  admin_users AdminUserRole[]
+
+  /// Approval stages this role owns. A role wired into a live stage cannot be
+  /// deleted — which is the point: it is somebody's queue.
+  approval_stages ApprovalStage[]
+
+  @@map("Roles")
+}
+
+/// One grantable capability, e.g. application.approve. The full catalogue is seeded from
+/// rbac.md §3; rows are never created at runtime, so an unknown code in a guard is a bug
+/// rather than a missing row.
+model Permission {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Functional area this permission belongs to, e.g. application. Groups the permission
+  /// matrix screen.
+  module String @db.VarChar(50)
+
+  /// Operation within the module, e.g. approve.
+  action String @db.VarChar(50)
+
+  /// Canonical "<module>.<action>" string used in authorize() calls and JWT claims. Unique.
+  code String @unique @db.VarChar(100)
+
+  /// Plain-language description of what holding this permission allows.
+  description String? @db.Text
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  roles RolePermission[]
+
+  @@unique([module, action])
+  @@map("Permissions")
+}
+
+/// Grant of one permission to one role. Join table, no attributes of its own.
+model RolePermission {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Roles.id — the role receiving the grant. ON DELETE CASCADE: deleting a role
+  /// removes its grants, which are meaningless without it.
+  role_id BigInt
+
+  /// FK to Permissions.id — the capability granted. ON DELETE CASCADE.
+  permission_id BigInt
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  role       Role       @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  permission Permission @relation(fields: [permission_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([role_id, permission_id])
+  @@index([permission_id])
+  @@map("RolePermissions")
+}
+
+/// Assignment of one role to one staff account, with a record of who assigned it.
+model AdminUserRole {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to AdminUsers.id — the staff member holding the role. ON DELETE CASCADE.
+  admin_user_id BigInt
+
+  /// FK to Roles.id — the role held. ON DELETE RESTRICT: a role still assigned to somebody
+  /// cannot be deleted out from under them.
+  role_id BigInt
+
+  /// FK to AdminUsers.id — who granted this role. ON DELETE SET NULL so the grant survives
+  /// the granter leaving. This is the "who gave them access" question in an access review.
+  assigned_by_admin_id BigInt?
+
+  /// Row creation timestamp (UTC), i.e. when the role was granted.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  admin_user  AdminUser  @relation("AdminUserRoleHolder", fields: [admin_user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  role        Role       @relation(fields: [role_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  assigned_by AdminUser? @relation("AdminUserRoleAssigner", fields: [assigned_by_admin_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([admin_user_id, role_id])
+  @@index([role_id])
+  @@index([assigned_by_admin_id])
+  @@map("AdminUserRoles")
+}
+
+/// Which audience a session or credential belongs to. Stored beside the hash and re-checked on
+/// every rotation, so a refresh row minted for a member is inert on an admin route even if the
+/// opaque string is stolen (ADR-002).
+enum TokenAudience {
+  MEMBER
+  ADMIN
+}
+
+/// Why a one-time code was issued. SIGNUP_VERIFY proves an email address at signup;
+/// PASSWORD_RESET is reserved for a code-based reset (the MVP reset flow uses the emailed link
+/// in PasswordResetTokens); LOGIN_2FA is reserved for the second factor recommended in
+/// security.md §3 and is never issued in the MVP.
+enum OtpPurpose {
+  SIGNUP_VERIFY
+  PASSWORD_RESET
+  LOGIN_2FA
+}
+
+/// One refresh session, for either audience. The access token is a short-lived JWT that is never
+/// stored; this row is what makes a session revocable, because a JWT cannot be recalled once
+/// issued. The opaque token itself is never stored — only its HMAC — so a database leak yields
+/// no usable session. Rotated on every use: refreshing revokes this row and inserts its
+/// successor (rbac.md §1).
+model AuthToken {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Users.id — the member whose session this is. ON DELETE CASCADE: a deleted account's
+  /// sessions must not outlive it. NULL when the session belongs to staff; the XOR check
+  /// constraint guarantees exactly one of user_id / admin_user_id is set.
+  user_id BigInt?
+
+  /// FK to AdminUsers.id — the staff member whose session this is. ON DELETE CASCADE. NULL for
+  /// member sessions.
+  admin_user_id BigInt?
+
+  /// HMAC-SHA256 of the opaque refresh token, keyed with JWT_REFRESH_SECRET. Unique, because
+  /// the lookup on refresh is by hash. The plaintext token exists only in the client's storage
+  /// and in the response that issued it; it is never logged and never re-derivable from here.
+  token_hash String @unique @db.Text
+
+  /// MEMBER or ADMIN. Checked against the route's audience on refresh, so a stolen member
+  /// refresh token cannot mint an admin access token.
+  audience TokenAudience
+
+  /// When this refresh token stops working (UTC): 7 days for members, 1 day for staff
+  /// (rbac.md §1). Indexed so the prune job can delete expired rows cheaply.
+  expires_at DateTime @db.Timestamptz(6)
+
+  /// When the session was ended (UTC) — by logout, by logout-all, or by being rotated out on a
+  /// successful refresh. NULL means live. Rows are revoked rather than deleted so a session
+  /// history exists for an access review.
+  revoked_at DateTime? @db.Timestamptz(6)
+
+  /// Client address the session was issued to, for the session list and abuse investigation.
+  /// NULL when the request arrived without a resolvable address.
+  ip String? @db.Inet
+
+  /// User-agent string at issue time, truncated to 512 characters. Shown as "Chrome on macOS"
+  /// in a session list; never used as an authentication factor.
+  user_agent String? @db.Text
+
+  /// Row creation timestamp (UTC) — when the session started.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC) — bumped when the row is revoked or rotated out.
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  user       User?      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  admin_user AdminUser? @relation(fields: [admin_user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([user_id, revoked_at])
+  @@index([admin_user_id, revoked_at])
+  @@index([expires_at])
+  @@map("AuthTokens")
+}
+
+/// One issued one-time code. Keyed by the identifier it was sent to rather than by a user id,
+/// because a code is issued before the account is proven and, for a resend, before any session
+/// exists. At most one live (unconsumed) code exists per identifier and purpose — a partial
+/// unique index enforces it, so issuing a new code provably retires the previous one instead of
+/// leaving several valid at once.
+model OtpCode {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Where the code was sent: an email address, or a phone number for an SMS/WhatsApp code.
+  /// Lower-cased before storage so a resend to "A@b.com" finds the code sent to "a@b.com".
+  identifier String @db.VarChar(150)
+
+  /// What the code authorises: SIGNUP_VERIFY, PASSWORD_RESET or LOGIN_2FA. Part of the lookup
+  /// key, so a signup code can never be replayed against a password reset.
+  purpose OtpPurpose
+
+  /// bcrypt hash (cost 12) of the numeric code. Hashed rather than stored, because a six-digit
+  /// code in a leaked table is worth as much as a password. Never logged, never returned.
+  code_hash String @db.Text
+
+  /// When the code stops being accepted (UTC). Ten minutes from issue; short enough that a
+  /// forwarded email is not a standing credential.
+  expires_at DateTime @db.Timestamptz(6)
+
+  /// When the code was used, or retired by a newer code being issued (UTC). NULL means live.
+  /// Single-use: a verified code is consumed in the same transaction that acts on it.
+  consumed_at DateTime? @db.Timestamptz(6)
+
+  /// Wrong guesses so far. At 5 the code is retired rather than left to be brute-forced, and
+  /// the caller is told to request a new one (auth.otpMaxAttempts).
+  attempt_count Int @default(0)
+
+  /// Row creation timestamp (UTC) — when the code was issued.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC) — bumped on each failed attempt and on consumption.
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([identifier, purpose, expires_at(sort: Desc)])
+  @@map("OtpCodes")
+}
+
+/// One emailed password-reset link, for either audience. Same XOR rule as AuthTokens. At most
+/// one live token exists per subject (partial unique index): requesting a new link retires the
+/// previous one, so a reset email that leaks later cannot be used after a newer one was sent.
+model PasswordResetToken {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Users.id — the member resetting their password. ON DELETE CASCADE. NULL for staff;
+  /// the XOR check constraint guarantees exactly one of the two is set.
+  user_id BigInt?
+
+  /// FK to AdminUsers.id — the staff member resetting their password. ON DELETE CASCADE. NULL
+  /// for members.
+  admin_user_id BigInt?
+
+  /// HMAC-SHA256 of the opaque token that appears in the emailed URL, keyed with
+  /// JWT_REFRESH_SECRET. Unique, because the lookup on reset is by hash. The plaintext exists
+  /// only in the email; it is never stored and never logged.
+  token_hash String @unique @db.Text
+
+  /// When the link stops working (UTC). One hour from issue.
+  expires_at DateTime @db.Timestamptz(6)
+
+  /// When the link was used, or retired by a newer request (UTC). NULL means live. Single-use:
+  /// consumption happens in the same transaction as the password change.
+  used_at DateTime? @db.Timestamptz(6)
+
+  /// Row creation timestamp (UTC) — when the link was requested.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC) — bumped on consumption or retirement.
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  user       User?      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  admin_user AdminUser? @relation(fields: [admin_user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([user_id])
+  @@index([admin_user_id])
+  @@index([expires_at])
+  @@map("PasswordResetTokens")
+}

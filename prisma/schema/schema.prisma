@@ -1,0 +1,25 @@
+// Association Management Platform — Prisma schema (multi-file, ADR-003).
+//
+// Layout (migration-strategy.md §"Schema file organisation"):
+//   schema.prisma        datasource + generator            (this file)
+//   identity.prisma      Users, AdminUsers, RBAC           (M0)
+//   system.prisma        AuditLogs, SystemSettings, JobRuns(M0)
+//   communication.prisma NotificationTemplates, Notifications (M0, ADR-015)
+//   membership / application / billing / event .prisma     (M2–M7)
+//
+// Conventions, applied without exception:
+//   - table name  PascalCasePlural via @@map
+//   - column name snake_case (the Prisma field name IS the column name)
+//   - audit timestamps camelCase: createdAt / updatedAt / deletedAt
+//   - money        Decimal(14, 2)  (none in M0)
+//   - every model and every field carries a `///` doc-comment, mirrored by a
+//     COMMENT ON in the migration that creates it (ADR-013, database-design §I)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}

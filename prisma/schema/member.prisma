@@ -1,0 +1,476 @@
+// The member record (M3): the company behind a login, its people, its addresses
+// and its KYC evidence.
+//
+// For new registrations (M5) the row is written at public signup together with
+// the application snapshot. The lazy create-on-first-request path remains for
+// accounts created before that change.
+
+/// Where a company sits in its membership lifecycle.
+enum MemberStatus {
+  /// Created with the login, nothing submitted yet. Invisible to the directory.
+  DRAFT
+
+  /// Application approved; membership starts when the first invoice is paid.
+  PENDING
+
+  /// Paid and current. The only status the public directory shows.
+  ACTIVE
+
+  /// Temporarily withdrawn by the association. Portal access remains.
+  SUSPENDED
+
+  /// Term ended without renewal.
+  EXPIRED
+
+  /// Permanently ended. Kept for history; never reactivated.
+  TERMINATED
+}
+
+/// Which address this is. A company may hold one of each.
+enum AddressType {
+  REGISTERED
+  FACTORY
+  CORRESPONDENCE
+}
+
+/// Where an uploaded document stands with the association.
+enum DocumentVerificationStatus {
+  /// Uploaded, nobody has looked at it yet.
+  PENDING
+
+  /// Checked by staff and accepted.
+  VERIFIED
+
+  /// Checked and refused — the remarks say why, and the member may re-upload.
+  REJECTED
+}
+
+/// State of a member's request to change a KYC-critical field.
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// A company. One row per organisation, owned by exactly one login (assumption A-2).
+model Member {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Human-facing membership number, e.g. LGDGF/2026/0042. NULL until approval
+  /// issues one — a draft company has no membership to number.
+  member_code String? @unique @db.VarChar(30)
+
+  /// FK to Users.id — the login that owns this company record.
+  /// ON DELETE RESTRICT: a login may not vanish while a company depends on it.
+  primary_user_id BigInt @unique
+
+  /// FK to CompanyTypes.id — the firm's legal form. ON DELETE RESTRICT.
+  company_type_id BigInt?
+
+  /// Whether the firm holds a GSTIN. Drives whether `gst_number` is required at
+  /// registration; false means the GSTIN field was submitted as N/A.
+  gstin_holder Boolean @default(false)
+
+  /// The reference form's "Company Category" Yes/No radio, stored verbatim.
+  company_category Boolean?
+
+  /// Landline, as distinct from the primary user's mobile.
+  landline String? @db.VarChar(20)
+
+  /// When the applicant ticked the data-processing consent box at registration.
+  consent_accepted_at DateTime? @db.Timestamptz(6)
+
+  /// The IP the consent was given from.
+  consent_ip String? @db.VarChar(45)
+
+  /// Trading name, as the member wants it shown in the directory.
+  company_name String @db.VarChar(200)
+
+  /// Registered legal name, when it differs from the trading name.
+  legal_name String? @db.VarChar(200)
+
+  /// Importer-Exporter Code. Unique across live members where present.
+  iec_code String? @db.VarChar(20)
+
+  /// GSTIN. Unique across live members where present; 15 characters when supplied.
+  gst_number String? @db.VarChar(20)
+
+  /// Company PAN. Not unique — a group may share one across entities.
+  pan_number String? @db.VarChar(15)
+
+  /// Trade licence / shop establishment number.
+  trade_license_no String? @db.VarChar(50)
+
+  /// Public website, shown in the directory.
+  website String? @db.VarChar(200)
+
+  /// Short description for the directory listing.
+  about String? @db.Text
+
+  /// Path of the company logo in the storage adapter, never a public URL.
+  logo_path String? @db.Text
+
+  /// Lifecycle state. Only ACTIVE members appear in the public directory.
+  status MemberStatus @default(DRAFT)
+
+  /// Whether the member consents to appearing in the directory at all. The
+  /// association can also hide a member globally; both must be true to list.
+  directory_visible Boolean @default(true)
+
+  /// Date the membership first became ACTIVE. NULL until then.
+  joined_on DateTime? @db.Date
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// Contact people at this company.
+  contacts MemberContact[]
+
+  /// Postal addresses.
+  addresses MemberAddress[]
+
+  /// KYC evidence.
+  documents MemberDocument[]
+
+  /// Every status transition, with who did it and why.
+  status_history MemberStatusHistory[]
+
+  /// Requests to change a KYC-critical field.
+  change_requests MemberProfileChangeRequest[]
+
+  /// Applications this company has filed.
+  applications MembershipApplication[]
+
+  /// Every membership period, past and present.
+  terms MembershipTerm[] @relation("MemberTerms")
+
+  /// FK to MembershipTerms.id — the term in force. A nullable pointer, set after
+  /// the term row exists, which is how the Member ⇄ Term cycle is resolved
+  /// (database-relationships.md §3). ON DELETE SET NULL.
+  current_term_id BigInt?
+
+  /// The term in force.
+  current_term MembershipTerm? @relation("MemberCurrentTerm", fields: [current_term_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  /// Invoices raised against this company.
+  invoices Invoice[]
+
+  /// The login that owns this company record.
+  primary_user User @relation(fields: [primary_user_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The firm's legal form.
+  company_type CompanyType? @relation(fields: [company_type_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Every category this firm claims — the registration form's "Business Nature"
+  /// checkboxes. Many, not one (spec D-6).
+  categories MemberCategory[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([company_type_id])
+  @@index([directory_visible, status])
+  @@map("Members")
+}
+
+/// A person to contact at a member company.
+model MemberContact {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Members.id. ON DELETE CASCADE — a contact is meaningless without its company.
+  member_id BigInt
+
+  /// Person's name.
+  name String @db.VarChar(150)
+
+  /// Role at the company, e.g. Director, Accounts.
+  designation String? @db.VarChar(100)
+
+  /// Contact email. Not a login — that is Users.email.
+  email String? @db.VarChar(150)
+
+  /// Contact phone.
+  phone String? @db.VarChar(20)
+
+  /// The one person the association writes to by default. Exactly one per member,
+  /// enforced by a partial unique index.
+  is_primary Boolean @default(false)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The company this person represents.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([member_id])
+  @@map("MemberContacts")
+}
+
+/// A postal address for a member company.
+model MemberAddress {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Members.id. ON DELETE CASCADE — owned by the company.
+  member_id BigInt
+
+  /// Which address this is: registered office, factory, or correspondence.
+  address_type AddressType @default(REGISTERED)
+
+  /// Street address, first line.
+  line1 String @db.VarChar(200)
+
+  /// Street address, second line.
+  line2 String? @db.VarChar(200)
+
+  /// City or town.
+  city String @db.VarChar(100)
+
+  /// State or province.
+  state String @db.VarChar(100)
+
+  /// Country. Defaults to India; the federation is Gujarat-based.
+  country String @default("India") @db.VarChar(100)
+
+  /// Postal code.
+  pincode String @db.VarChar(10)
+
+  /// FK to Countries.id. ON DELETE RESTRICT.
+  country_id BigInt?
+
+  /// FK to States.id. ON DELETE RESTRICT.
+  state_id BigInt?
+
+  /// FK to Cities.id. ON DELETE RESTRICT.
+  city_id BigInt?
+
+  /// The address used when only one is needed. One per member.
+  is_primary Boolean @default(false)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The company at this address.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The country master row, when the address was captured from the masters.
+  country_ref Country? @relation(fields: [country_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The state master row.
+  state_ref State? @relation(fields: [state_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The city master row.
+  city_ref City? @relation(fields: [city_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([member_id, address_type])
+  @@map("MemberAddresses")
+}
+
+/// One uploaded KYC file belonging to a member.
+///
+/// Re-uploading does not overwrite: a new row is written with `version + 1` and the
+/// old file is kept, because an approver's decision must stay explainable by the
+/// document they actually saw (file-storage.md §5).
+model MemberDocument {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Members.id. ON DELETE CASCADE — owned by the company.
+  member_id BigInt
+
+  /// FK to DocumentTypes.id — which requirement this satisfies. ON DELETE RESTRICT:
+  /// a type still in use cannot be removed.
+  document_type_id BigInt
+
+  /// Which face of the document this file is. SINGLE for a one-file type.
+  side DocumentSide @default(SINGLE)
+
+  /// Key in the storage adapter, e.g. members/12/kyc/GST_CERTIFICATE/<uuid>.pdf.
+  /// Never a public URL — downloads go through an authorised endpoint.
+  file_path String @db.Text
+
+  /// The member's own filename, shown back to them. Never used to build a path.
+  original_name String @db.VarChar(255)
+
+  /// MIME type confirmed by sniffing the file's magic bytes, not the upload header.
+  mime_type String @db.VarChar(100)
+
+  /// File size in bytes, checked against the document type's ceiling before storing.
+  size_bytes BigInt
+
+  /// SHA-256 of the stored bytes. Proves integrity after a restore and detects a
+  /// re-upload of an identical file.
+  checksum_sha256 String @db.Char(64)
+
+  /// Upload sequence for this member and document type, starting at 1.
+  version Int @default(1)
+
+  /// Where this file stands with the association.
+  verification_status DocumentVerificationStatus @default(PENDING)
+
+  /// FK to AdminUsers.id — who verified or rejected it. ON DELETE SET NULL.
+  verified_by_admin_id BigInt?
+
+  /// When the verification decision was made.
+  verified_at DateTime? @db.Timestamptz(6)
+
+  /// Why it was rejected, shown verbatim to the member. Mandatory on rejection.
+  remarks String? @db.Text
+
+  /// Row creation timestamp (UTC) — when the file was uploaded.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The company that uploaded this file.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The requirement this file satisfies.
+  document_type DocumentType @relation(fields: [document_type_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The staff member who verified or rejected it.
+  verified_by AdminUser? @relation("MemberDocumentVerifier", fields: [verified_by_admin_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([member_id, document_type_id])
+  @@index([verification_status])
+  @@map("MemberDocuments")
+}
+
+/// A member's request to change a field they may not edit directly.
+///
+/// Non-critical fields (phone, website, about) save immediately. The fields that
+/// identify the company to the federation — name, IEC, GST, trade licence — go
+/// through an approver, because changing them silently would change who the
+/// membership belongs to (assumption A-11).
+model MemberProfileChangeRequest {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Members.id. ON DELETE CASCADE.
+  member_id BigInt
+
+  /// FK to Users.id — who asked. ON DELETE RESTRICT, so the request keeps its author.
+  requested_by_user_id BigInt
+
+  /// The proposed change as { field: { old, new } }. A diff, not relational data —
+  /// the documented JSON use (database-design.md §H).
+  changes_json Json
+
+  /// Why the member is asking. Helps the approver decide without a phone call.
+  reason String? @db.Text
+
+  /// Where the request stands.
+  status ChangeRequestStatus @default(PENDING)
+
+  /// FK to AdminUsers.id — who decided. ON DELETE SET NULL.
+  decided_by_admin_id BigInt?
+
+  /// When the decision was made.
+  decided_at DateTime? @db.Timestamptz(6)
+
+  /// The approver's note, shown verbatim to the member. Mandatory on rejection.
+  remarks String? @db.Text
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// The company this request concerns.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// Approval requests tracking this change through its workflow.
+  approval_requests ApprovalRequest[]
+
+  /// The member user who raised it.
+  requested_by User @relation("ChangeRequestAuthor", fields: [requested_by_user_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The staff member who decided it.
+  decided_by AdminUser? @relation("ChangeRequestDecider", fields: [decided_by_admin_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([member_id, status])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("MemberProfileChangeRequests")
+}
+
+/// One membership status transition. Append-only: the timeline on a member's
+/// record is assembled from these rows, so they are never edited or removed.
+model MemberStatusHistory {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Members.id. ON DELETE CASCADE.
+  member_id BigInt
+
+  /// Status before the change. NULL for the first row, when the record was created.
+  from_status MemberStatus?
+
+  /// Status after the change.
+  to_status MemberStatus
+
+  /// Why the status changed, in the actor's words. Mandatory for suspend,
+  /// reactivate and terminate.
+  reason String? @db.Text
+
+  /// FK to AdminUsers.id — the staff member responsible. NULL when the platform
+  /// itself made the change (payment received, term expired). ON DELETE SET NULL.
+  changed_by_admin_id BigInt?
+
+  /// When the transition happened (UTC). No updatedAt: these rows never change.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// The company whose status changed.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The staff member responsible, when a person made the change.
+  changed_by AdminUser? @relation("MemberStatusActor", fields: [changed_by_admin_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([member_id, createdAt(sort: Desc)])
+  @@map("MemberStatusHistory")
+}
+
+/// A category a member claims. The many-to-many behind the registration form's
+/// "Business Nature" checkboxes.
+model MemberCategory {
+  /// FK to Members.id. ON DELETE CASCADE — a claim is meaningless without its firm.
+  member_id BigInt
+
+  /// FK to MembershipCategories.id. ON DELETE RESTRICT.
+  category_id BigInt
+
+  /// When the claim was recorded.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// The firm making the claim.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The category claimed.
+  category MembershipCategory @relation(fields: [category_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([member_id, category_id])
+  @@index([category_id])
+  @@map("MemberCategories")
+}

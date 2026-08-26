@@ -1,0 +1,315 @@
+// Membership catalogue (M2): what a company can join, and what it costs.
+//
+// Nothing here is seeded. The federation's real categories, tiers, fee amounts,
+// GST treatment and durations are open question OQ-2 (docs/assumptions.md), so
+// the tables ship empty and the admin UI is how they get filled. A wrong default
+// would quietly become the association's price list.
+
+/// Which fee a FeeStructure row prices. Kept as an enum rather than a free string so the
+/// resolver cannot silently miss a row because someone typed "renewal" instead of "RENEWAL".
+enum FeeType {
+  /// First-time membership, charged when an application is approved.
+  NEW_MEMBERSHIP
+
+  /// Charged when an existing member renews for another term.
+  RENEWAL
+
+  /// Fallback price for a paid event that does not set its own fee.
+  EVENT_DEFAULT
+}
+
+/// Which side of the platform a document type applies to: the application form, the ongoing
+/// member profile, or both.
+enum DocumentAppliesTo {
+  APPLICATION
+  MEMBER
+  BOTH
+}
+
+/// How many faces of a physical document must be collected. A certificate is one
+/// file; an ID card carries its address or signature on the reverse.
+enum DocumentSides {
+  /// One file is the whole document.
+  SINGLE
+
+  /// Two files — an applicant who supplies only one has not supplied the document.
+  FRONT_AND_BACK
+}
+
+/// Which face an uploaded file is. Stored on every upload so a reviewer can accept
+/// one side and reject the other without the member re-supplying both.
+enum DocumentSide {
+  /// The only file for a SINGLE type.
+  SINGLE
+
+  FRONT
+
+  BACK
+
+  /// One multi-page PDF carrying both faces of a FRONT_AND_BACK type.
+  COMBINED
+}
+
+/// A class of membership — the federation's own vocabulary for the kind of company joining
+/// (grower, manufacturer, trader, …). Deactivated rather than deleted once anything references
+/// it, so historic members and invoices stay resolvable.
+model MembershipCategory {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Stable machine name, e.g. GROWER. Used by seeds, imports and the fee resolver; never shown
+  /// to a member. Immutable once created — renaming it would orphan references.
+  code String @unique @db.VarChar(30)
+
+  /// Display name shown to applicants and admins, e.g. "Grower".
+  name String @db.VarChar(120)
+
+  /// Optional explanation shown on the public membership page to help an applicant self-select.
+  description String? @db.Text
+
+  /// Sort position in listings and on the application form. Lower first.
+  display_order Int @default(0)
+
+  /// Whether new applications may choose this category. Existing members keep theirs regardless.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// Tiers belonging to this category.
+  tiers MembershipTier[]
+
+  /// Fee rows priced against this category.
+  fees FeeStructure[]
+
+  /// Members claiming this category on the registration form.
+  member_links MemberCategory[]
+
+  /// Applications for this class.
+  applications MembershipApplication[]
+
+  /// Membership terms held under this class.
+  terms MembershipTerm[]
+
+  @@index([is_active, display_order])
+  @@map("MembershipCategories")
+}
+
+/// An optional band inside a category (Gold / Silver, Founder / Ordinary). A category with no
+/// tiers is priced by its category-wide fee row; a category with tiers can price each one.
+model MembershipTier {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to MembershipCategories.id — the category this tier belongs to.
+  /// ON DELETE RESTRICT: a tier must never outlive its category.
+  category_id BigInt
+
+  /// Stable machine name, unique within the category, e.g. GOLD.
+  code String @db.VarChar(30)
+
+  /// Display name shown to applicants and admins, e.g. "Gold".
+  name String @db.VarChar(120)
+
+  /// Optional explanation of what this tier includes.
+  description String? @db.Text
+
+  /// Sort position within the category. Lower first.
+  display_order Int @default(0)
+
+  /// Whether new applications may choose this tier.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The category this tier belongs to.
+  category MembershipCategory @relation(fields: [category_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Fee rows priced specifically against this tier.
+  fees FeeStructure[]
+
+  /// Applications for this band.
+  applications MembershipApplication[]
+
+  /// Membership terms held in this band.
+  terms MembershipTerm[]
+
+  @@index([category_id, display_order])
+  @@map("MembershipTiers")
+}
+
+/// One price, valid for a date range.
+///
+/// Resolution (billing-payment.md §2): a tier-specific row beats a category-wide one, and among
+/// equals the newest effective_from wins. Rows are never edited once they have priced an invoice
+/// — a price change is a new row with a new effective_from, which is what keeps last year's
+/// invoice explainable.
+model FeeStructure {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to MembershipCategories.id, or NULL for the association-wide price.
+  category_id BigInt?
+
+  /// FK to MembershipTiers.id, or NULL for a price that covers the whole category.
+  /// ON DELETE RESTRICT, same reason.
+  tier_id BigInt?
+
+  /// What this price is for: new membership, renewal, or a default event fee.
+  fee_type FeeType
+
+  /// Amount before tax, INR, 2 decimal places. Never a float (ADR-007). CHECK amount >= 0.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// Tax percentage applied on top, e.g. 18.00 for 18% GST. 0 when the association does not
+  /// charge tax on this fee. CHECK between 0 and 100.
+  tax_rate Decimal @default(0) @db.Decimal(5, 2)
+
+  /// ISO-4217 currency code. INR only for now (assumption A-3); the column exists so a second
+  /// currency is a data change rather than a migration.
+  currency String @default("INR") @db.Char(3)
+
+  /// How many months of membership this fee buys. Drives the term's valid_till in M4/M6.
+  duration_months Int @default(12)
+
+  /// First date this price applies, inclusive.
+  effective_from DateTime @db.Date
+
+  /// Last date this price applies, inclusive. NULL means open-ended.
+  /// CHECK effective_to IS NULL OR effective_to > effective_from.
+  effective_to DateTime? @db.Date
+
+  /// Whether the resolver may pick this row. Lets an admin retire a price without deleting it.
+  is_active Boolean @default(true)
+
+  /// Optional internal note, e.g. the committee resolution that set this price. Never shown to
+  /// members.
+  notes String? @db.Text
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The category this price belongs to, when it is category-specific.
+  category MembershipCategory? @relation(fields: [category_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The tier this price belongs to, when it is tier-specific.
+  tier MembershipTier? @relation(fields: [tier_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Invoice lines priced from this fee, so a charge can always be traced back.
+  invoice_items InvoiceItem[]
+
+  @@index([category_id, tier_id, fee_type, effective_from(sort: Desc)])
+  @@index([is_active, effective_from])
+  @@map("FeeStructures")
+}
+
+/// A kind of document the platform asks for — GST certificate, IEC certificate, trade licence.
+/// The list is configuration, not code: the federation's real requirements are OQ-9, so this
+/// ships empty and is filled from the admin UI.
+model DocumentType {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Stable machine name, e.g. GST_CERTIFICATE. Referenced by uploads and checklists.
+  code String @unique @db.VarChar(50)
+
+  /// Display name shown to members on the upload checklist, e.g. "GST certificate".
+  name String @db.VarChar(120)
+
+  /// Optional guidance shown next to the upload control — what a valid document looks like.
+  description String? @db.Text
+
+  /// Whether this document is asked for on the application, on the member profile, or both.
+  applies_to DocumentAppliesTo @default(BOTH)
+
+  /// Whether an application cannot be submitted without it. Optional documents still upload.
+  is_required Boolean @default(false)
+
+  /// Whether this document is collected as one file or as a front and a back.
+  /// Existing rows default to SINGLE, which is how every type behaved before M5.
+  sides DocumentSides @default(SINGLE)
+
+  /// Upload size ceiling in megabytes, enforced before the file is buffered (file-storage.md §3).
+  /// CHECK between 1 and 50.
+  max_size_mb Int @default(10)
+
+  /// Permitted MIME types. The upload also sniffs magic bytes, because a client-declared
+  /// Content-Type is not evidence (file-storage.md §3).
+  allowed_mime String[] @default(["application/pdf", "image/jpeg", "image/png"])
+
+  /// Sort position on the checklist. Lower first.
+  display_order Int @default(0)
+
+  /// Whether this type is offered for new uploads. Existing documents keep their type.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// Files uploaded against this requirement.
+  member_documents MemberDocument[]
+
+  /// Evidence uploaded against this requirement during registration.
+  application_documents ApplicationDocument[]
+
+  @@index([applies_to, is_active, display_order])
+  @@map("DocumentTypes")
+}
+
+/// The legal form of a member firm — Proprietary, Partnership, Private Ltd., Public Ltd.
+model CompanyType {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Stable machine name, e.g. PRIVATE_LTD. Immutable once created.
+  code String @unique @db.VarChar(30)
+
+  /// Display name shown on the registration form, e.g. "Private Ltd.".
+  name String @db.VarChar(120)
+
+  /// Sort position on the form. Lower first.
+  display_order Int @default(0)
+
+  /// Whether the registration form may offer it. Existing members keep theirs regardless.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// Firms registered under this legal form.
+  members Member[]
+
+  @@index([is_active, display_order])
+  @@map("CompanyTypes")
+}

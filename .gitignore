@@ -1,0 +1,19 @@
+node_modules
+dist
+coverage
+
+# Every env flavour is secret; only the template is tracked.
+.env
+.env.*
+!.env.example
+
+# Local file storage must never end up in the repo (file-storage.md §2).
+uploads
+storage
+
+# Operational output
+*.log
+logs
+reports
+*.dump
+.DS_Store

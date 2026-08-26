@@ -1,0 +1,771 @@
+// Application and approval (M4).
+//
+// This is the cycle where the platform earns its keep: an application moves
+// through configurable, role-bound stages, every decision is recorded and
+// unerasable, and the final approval atomically produces an active-pending
+// member with a code, a membership term and an invoice.
+//
+// The workflow is DATA, not code (user decision, 2026-08-13): stages live in
+// ApprovalStages and each points at the role that owns it, so adding a stage or
+// moving approval authority is a re-seed rather than a deployment.
+
+/// Where an application sits. APPROVED, REJECTED and WITHDRAWN are terminal.
+enum ApplicationStatus {
+  /// Being filled in. Only the applicant sees it.
+  DRAFT
+
+  /// Submitted, waiting for the first stage to pick it up.
+  SUBMITTED
+
+  /// A reviewer has it, at the stage named by current_stage_id.
+  UNDER_REVIEW
+
+  /// Rejected while attempts remain: sent back with remarks, and the applicant
+  /// fixes and resubmits through the emailed link. The enum name is historical —
+  /// the reviewer presses Reject, and the applicant is told "action needed"
+  /// (spec §3).
+  RETURNED_FOR_CORRECTION
+
+  /// Approved at the final stage. Member, term and invoice now exist.
+  APPROVED
+
+  /// Refused for good. Reached when a reject lands on the last permitted attempt
+  /// (`application.max_resubmissions`). Terminal — the link dies and a new
+  /// attempt is a new application.
+  REJECTED
+
+  /// Withdrawn by the applicant before a decision.
+  WITHDRAWN
+}
+
+/// What a reviewer did at a stage. Recorded once, never edited.
+enum ApprovalActionType {
+  /// Passed this stage. The last stage's approval activates the membership.
+  APPROVE
+
+  /// Refused at the cap. Terminal for the application.
+  REJECT
+
+  /// Refused while attempts remained, so the application went back to the
+  /// applicant. Recorded by the same Reject button as REJECT above — which of
+  /// the two is written depends on the resubmission count, not on the reviewer
+  /// choosing between two words for the same thought (spec D-1).
+  RETURN
+
+  /// Moved to a different stage without deciding — used when the wrong queue has it.
+  REASSIGN
+
+  /// A note on the record that changes nothing.
+  COMMENT
+}
+
+/// Lifecycle of one approval request.
+enum ApprovalRequestStatus {
+  OPEN
+  APPROVED
+  REJECTED
+  RETURNED
+  WITHDRAWN
+}
+
+/// What an approval workflow governs. An enum rather than a polymorphic FK
+/// (ADR-006): the subject columns below are real foreign keys and a CHECK
+/// constraint enforces that exactly the matching one is set.
+enum ApprovalSubjectType {
+  MEMBERSHIP_APPLICATION
+  PROFILE_CHANGE_REQUEST
+}
+
+/// Why a membership term exists.
+enum TermType {
+  /// First term, created when an application is approved.
+  NEW
+
+  /// A subsequent term created by renewal (M6).
+  RENEWAL
+}
+
+/// Where a membership term stands.
+enum TermStatus {
+  /// Created with its invoice; membership is not active until that invoice is paid.
+  PENDING_PAYMENT
+
+  /// Paid and running.
+  ACTIVE
+
+  /// Ran to its end date without renewal.
+  EXPIRED
+
+  /// Voided — e.g. the application was later reversed.
+  CANCELLED
+}
+
+/// What an invoice is for.
+enum InvoiceType {
+  MEMBERSHIP
+  RENEWAL
+  EVENT
+  OTHER
+}
+
+/// Invoice lifecycle. PAID and CANCELLED are terminal; a mistake on a PAID
+/// invoice is corrected by a refund, never by editing history.
+enum InvoiceStatus {
+  /// Being prepared. The only status in which an invoice may be edited.
+  DRAFT
+
+  /// Issued to the member and payable.
+  ISSUED
+
+  /// Part of the balance has been paid.
+  PARTIALLY_PAID
+
+  /// Settled in full.
+  PAID
+
+  /// Past its due date and unpaid.
+  OVERDUE
+
+  /// Voided before payment.
+  CANCELLED
+}
+
+/// A company's request to join, and the snapshot of what they submitted.
+///
+/// The live company profile lives on Members (ADR-016). The fields here are the
+/// **submitted snapshot** — what the approver actually saw — and are never
+/// rewritten after submission, so a decision stays explainable a year later.
+model MembershipApplication {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Human-facing reference, e.g. APP2026030001. Assigned on submission, so a
+  /// draft nobody submitted never consumes one.
+  application_number String? @unique @db.VarChar(30)
+
+  /// FK to Users.id — the login that filed it. ON DELETE RESTRICT: the history
+  /// keeps its author.
+  user_id BigInt
+
+  /// FK to Members.id — the company record this application belongs to. Created
+  /// with the draft (ADR-016), so this is never null. ON DELETE CASCADE.
+  member_id BigInt
+
+  /// FK to MembershipCategories.id — the class applied for. ON DELETE RESTRICT.
+  category_id BigInt
+
+  /// FK to MembershipTiers.id, when the category has bands. ON DELETE RESTRICT.
+  tier_id BigInt?
+
+  /// Where the application sits.
+  status ApplicationStatus @default(DRAFT)
+
+  /// FK to ApprovalStages.id — the stage currently holding it. NULL for a draft
+  /// or a decided application. ON DELETE SET NULL.
+  current_stage_id BigInt?
+
+  /**
+   * --- submitted snapshot (frozen at submission) -------------------------
+   */
+
+  /// Trading name as submitted.
+  company_name String @db.VarChar(200)
+
+  /// Registered legal name as submitted.
+  legal_name String? @db.VarChar(200)
+
+  /// Nature of business as submitted.
+  business_type String? @db.VarChar(100)
+
+  /// Importer-Exporter Code as submitted.
+  iec_code String? @db.VarChar(20)
+
+  /// GSTIN as submitted.
+  gst_number String? @db.VarChar(20)
+
+  /// PAN as submitted.
+  pan_number String? @db.VarChar(15)
+
+  /// Trade licence number as submitted.
+  trade_license_no String? @db.VarChar(50)
+
+  /// Website as submitted.
+  website String? @db.VarChar(200)
+
+  /// The applicant's description of the company.
+  about String? @db.Text
+
+  /// Free-form extra information the form collects but does not model
+  /// relationally — a documented JSON use (database-design.md §H).
+  extra_json Json?
+
+  /**
+   * --- lifecycle --------------------------------------------------------
+   */
+
+  /// When it was first submitted. NULL while DRAFT.
+  submitted_at DateTime? @db.Timestamptz(6)
+
+  /// When it reached a terminal status.
+  decided_at DateTime? @db.Timestamptz(6)
+
+  /// How many times it has been sent back and resubmitted. Compared against
+  /// SystemSettings.application.max_resubmissions, which the super admin sets.
+  resubmission_count Int @default(0)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The login that filed it.
+  user User @relation(fields: [user_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The company record it belongs to.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The class applied for.
+  category MembershipCategory @relation(fields: [category_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The band applied for.
+  tier MembershipTier? @relation(fields: [tier_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The stage currently holding it.
+  current_stage ApprovalStage? @relation(fields: [current_stage_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  /// Evidence attached to this application.
+  documents ApplicationDocument[]
+
+  /// The approval request tracking it through the stages.
+  approval_requests ApprovalRequest[]
+
+  /// The login-free links that let the applicant come back and correct it.
+  access_tokens ApplicationAccessToken[]
+
+  @@index([status, submitted_at(sort: Desc)])
+  @@index([current_stage_id, status])
+  @@index([user_id, createdAt(sort: Desc)])
+  @@index([member_id])
+  @@map("MembershipApplications")
+}
+
+/// A file attached to an application. Separate from MemberDocuments rather than
+/// one polymorphic table (ADR-006) — the two have different lifecycles, and an
+/// application's evidence must stay frozen with the decision.
+model ApplicationDocument {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to MembershipApplications.id. ON DELETE CASCADE.
+  application_id BigInt
+
+  /// FK to DocumentTypes.id — which checklist requirement this file satisfies.
+  /// ON DELETE RESTRICT, backed by an application-level in-use guard on the master
+  /// (a soft delete is an UPDATE, which a foreign key cannot catch).
+  document_type_id BigInt
+
+  /// Which face of the document this file is. SINGLE for a one-file type.
+  side DocumentSide @default(SINGLE)
+
+  /// Storage key. Never a public URL; downloads go through an authorised endpoint.
+  file_path String @db.Text
+
+  /// The applicant's filename, for display. Never used to build a path.
+  original_name String @db.VarChar(255)
+
+  /// MIME type confirmed by sniffing the bytes, not the upload header.
+  mime_type String @db.VarChar(100)
+
+  /// Size in bytes, checked against the document type's ceiling before storing.
+  size_bytes BigInt
+
+  /// SHA-256 of the stored bytes.
+  checksum_sha256 String @db.Char(64)
+
+  /// Upload sequence for this application and type, starting at 1.
+  version Int @default(1)
+
+  /// Where this file stands with the reviewer.
+  verification_status DocumentVerificationStatus @default(PENDING)
+
+  /// FK to AdminUsers.id — who decided. ON DELETE SET NULL.
+  verified_by_admin_id BigInt?
+
+  /// When the decision was made.
+  verified_at DateTime? @db.Timestamptz(6)
+
+  /// Why it was rejected, shown verbatim to the applicant. Mandatory on rejection.
+  remarks String? @db.Text
+
+  /// Whether the applicant must replace this file before resubmitting.
+  ///
+  /// Set by the reject transaction for every document the reviewer marked ✗, and
+  /// cleared when a replacement is uploaded. It is what makes the resubmit page
+  /// ask for two documents rather than all three: a `VERIFIED` file survives a
+  /// rejection (spec D-12) and must not be demanded again.
+  ///
+  /// Distinct from `verification_status` on purpose — the status records what the
+  /// reviewer decided, this records what is still owed. A document can be
+  /// `REJECTED` and already replaced, at which point the debt is settled but the
+  /// history of the refusal stays readable.
+  requires_reupload Boolean @default(false)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The application this evidence belongs to.
+  application MembershipApplication @relation(fields: [application_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The checklist requirement this file satisfies.
+  document_type DocumentType @relation(fields: [document_type_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The staff member who verified or rejected it.
+  verified_by AdminUser? @relation("ApplicationDocumentVerifier", fields: [verified_by_admin_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([application_id, document_type_id])
+  @@index([verification_status])
+  @@map("ApplicationDocuments")
+}
+
+/// The applicant's way back in, without an account.
+///
+/// Registration deliberately creates no password before final approval (spec
+/// D-10), so an application sent back for correction cannot be reached by
+/// logging in — there is nothing to log in to. This table is the answer: a
+/// random secret is emailed as a link, and only its SHA-256 is stored, so a leak
+/// of this table hands nobody a working link.
+///
+/// One live token per application, reissued on every reject. No fixed lifetime
+/// (spec OQ-2, resolved 2026-08-25): the link lives as long as the application
+/// is open and is revoked when it reaches APPROVED or REJECTED — an expiry
+/// measured in days would strand exactly the applicant who took a fortnight to
+/// find a clean scan. `expires_at` exists so that decision can be revisited
+/// without a migration.
+model ApplicationAccessToken {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to MembershipApplications.id. ON DELETE CASCADE — a link outliving its
+  /// application would be a URL to nothing.
+  application_id BigInt
+
+  /// SHA-256 of the emailed secret. Unique, so a lookup is one indexed read of
+  /// the hash rather than a scan; the plaintext is never stored anywhere.
+  token_hash String @unique @db.Char(64)
+
+  /// When the link stops working, or NULL for no fixed expiry (spec OQ-2).
+  expires_at DateTime? @db.Timestamptz(6)
+
+  /// When the link was withdrawn — set on approval, on final rejection, and on
+  /// reissue, so exactly one token is live at a time.
+  revoked_at DateTime? @db.Timestamptz(6)
+
+  /// Row creation timestamp (UTC). No updatedAt: a token is issued, then either
+  /// used or revoked. It is never edited.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// The application this link opens.
+  application MembershipApplication @relation(fields: [application_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([application_id])
+  @@map("ApplicationAccessTokens")
+}
+
+/// A named approval process. Seeded; the editor UI arrives in M10.
+model ApprovalWorkflow {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Stable machine name, e.g. MEMBERSHIP_APPROVAL.
+  code String @unique @db.VarChar(50)
+
+  /// Display name for the admin screens.
+  name String @db.VarChar(150)
+
+  /// What this workflow governs.
+  subject_type ApprovalSubjectType
+
+  /// Whether new requests use it. Retiring a workflow leaves open requests alone.
+  is_active Boolean @default(true)
+
+  /// Bumped when the stage list changes, so a request can record which shape it
+  /// was judged under.
+  version Int @default(1)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// The ordered stages.
+  stages ApprovalStage[]
+
+  /// Requests judged under this workflow.
+  requests ApprovalRequest[]
+
+  @@map("ApprovalWorkflows")
+}
+
+/// One step in a workflow, owned by a role.
+///
+/// `approver_role_id` is the whole configurability story: who may act on this
+/// stage is a role, and which role is data. Moving approval authority is a
+/// re-seed, not a deployment.
+model ApprovalStage {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to ApprovalWorkflows.id. ON DELETE CASCADE.
+  workflow_id BigInt
+
+  /// Position in the flow, 1-based. Unique within the workflow.
+  sequence Int
+
+  /// What this step is called on screen, e.g. "Document verification".
+  name String @db.VarChar(150)
+
+  /// FK to Roles.id — the role whose holders may act here. ON DELETE RESTRICT:
+  /// a role wired into a live stage cannot be deleted.
+  approver_role_id BigInt
+
+  /// Whether approving here approves the whole application.
+  is_final Boolean @default(false)
+
+  /// Target turnaround in hours. Surfaced as an "overdue" badge; no automatic
+  /// escalation in the MVP.
+  sla_hours Int?
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// The workflow this stage belongs to.
+  workflow ApprovalWorkflow @relation(fields: [workflow_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The role that owns this queue.
+  approver_role Role @relation(fields: [approver_role_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Applications currently sitting here.
+  applications MembershipApplication[]
+
+  /// Requests currently sitting here.
+  current_requests ApprovalRequest[] @relation("ApprovalRequestCurrentStage")
+
+  /// Actions taken at this stage.
+  actions ApprovalAction[]
+
+  @@unique([workflow_id, sequence])
+  @@index([approver_role_id])
+  @@map("ApprovalStages")
+}
+
+/// One subject travelling through one workflow.
+model ApprovalRequest {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to ApprovalWorkflows.id. ON DELETE RESTRICT — history must stay readable.
+  workflow_id BigInt
+
+  /// Which kind of subject this is. Paired with the FK columns below by a CHECK
+  /// constraint that requires exactly the matching one to be set (ADR-006).
+  subject_type ApprovalSubjectType
+
+  /// FK to MembershipApplications.id when subject_type is MEMBERSHIP_APPLICATION.
+  /// ON DELETE CASCADE.
+  application_id BigInt?
+
+  /// FK to MemberProfileChangeRequests.id when subject_type is
+  /// PROFILE_CHANGE_REQUEST. ON DELETE CASCADE.
+  profile_change_request_id BigInt?
+
+  /// FK to ApprovalStages.id — where it is now. ON DELETE RESTRICT.
+  current_stage_id BigInt
+
+  /// Lifecycle of this request.
+  status ApprovalRequestStatus @default(OPEN)
+
+  /// When it entered the workflow.
+  opened_at DateTime @default(now()) @db.Timestamptz(6)
+
+  /// When it reached a terminal status.
+  closed_at DateTime? @db.Timestamptz(6)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// The workflow being followed.
+  workflow ApprovalWorkflow @relation(fields: [workflow_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The application under review, when that is the subject.
+  application MembershipApplication? @relation(fields: [application_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The profile change under review, when that is the subject.
+  profile_change_request MemberProfileChangeRequest? @relation(fields: [profile_change_request_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// Where it currently sits.
+  current_stage ApprovalStage @relation("ApprovalRequestCurrentStage", fields: [current_stage_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Everything anyone did to it.
+  actions ApprovalAction[]
+
+  @@index([status, current_stage_id])
+  @@index([application_id])
+  @@index([profile_change_request_id])
+  @@map("ApprovalRequests")
+}
+
+/// One thing one person did at one stage.
+///
+/// Append-only. UPDATE and DELETE are revoked from the application database role
+/// (deployment.md §8b) — an approval trail that can be edited is not a trail.
+model ApprovalAction {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to ApprovalRequests.id. ON DELETE CASCADE.
+  approval_request_id BigInt
+
+  /// FK to ApprovalStages.id — where this happened. ON DELETE RESTRICT.
+  stage_id BigInt
+
+  /// FK to AdminUsers.id — who did it. ON DELETE RESTRICT: an action must always
+  /// name a real actor.
+  admin_user_id BigInt
+
+  /// What they did.
+  action ApprovalActionType
+
+  /// Application status before the action.
+  from_status ApplicationStatus?
+
+  /// Application status after the action.
+  to_status ApplicationStatus?
+
+  /// The reviewer's words. Mandatory for REJECT and RETURN — a refusal the
+  /// applicant cannot act on is worse than none. Shown to them verbatim.
+  remarks String? @db.Text
+
+  /// When it happened (UTC). No updatedAt, no deletedAt: these rows never change.
+  acted_at DateTime @default(now()) @db.Timestamptz(6)
+
+  /// The request this action belongs to.
+  approval_request ApprovalRequest @relation(fields: [approval_request_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The stage it happened at.
+  stage ApprovalStage @relation(fields: [stage_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The staff member responsible.
+  admin_user AdminUser @relation("ApprovalActor", fields: [admin_user_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([approval_request_id, acted_at(sort: Desc)])
+  @@index([admin_user_id, acted_at(sort: Desc)])
+  @@map("ApprovalActions")
+}
+
+/// One period of membership. A new term per join and per renewal, so the history
+/// of what a company held and when is a list of rows rather than a mutated record.
+model MembershipTerm {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Members.id. ON DELETE CASCADE.
+  member_id BigInt
+
+  /// FK to MembershipCategories.id — the class held for this term, captured so a
+  /// later category change does not rewrite history. ON DELETE RESTRICT.
+  category_id BigInt
+
+  /// FK to MembershipTiers.id — the band held, when applicable. ON DELETE RESTRICT.
+  tier_id BigInt?
+
+  /// Whether this is the first term or a renewal.
+  term_type TermType @default(NEW)
+
+  /// First day of cover.
+  valid_from DateTime @db.Date
+
+  /// Last day of cover. CHECK valid_till > valid_from.
+  valid_till DateTime @db.Date
+
+  /// Where the term stands. Membership is only ACTIVE once its invoice is paid.
+  status TermStatus @default(PENDING_PAYMENT)
+
+  /// FK to Invoices.id — the invoice that pays for this term. ON DELETE SET NULL:
+  /// a cancelled invoice must not delete the term it was raised for.
+  invoice_id BigInt?
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// The company covered.
+  member Member @relation("MemberTerms", fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The class held for this term.
+  category MembershipCategory @relation(fields: [category_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The band held for this term.
+  tier MembershipTier? @relation(fields: [tier_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The invoice raised for it.
+  invoice Invoice? @relation("TermInvoice", fields: [invoice_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  /// The member records pointing at this term as their current one.
+  current_for Member[] @relation("MemberCurrentTerm")
+
+  @@index([member_id, valid_till(sort: Desc)])
+  @@index([status, valid_till])
+  @@map("MembershipTerms")
+}
+
+/// A bill. Immutable after issue except for its payment state — a mistake on an
+/// issued invoice is corrected by a credit or a refund, never by an edit.
+model Invoice {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Human-facing number, format IN + year + calendar quarter + 3-digit sequence
+  /// restarting each quarter, e.g. IN202603001 (client decision, 2026-08-13).
+  invoice_number String @unique @db.VarChar(30)
+
+  /// FK to Members.id — who is billed. ON DELETE RESTRICT: financial records are
+  /// never orphaned.
+  member_id BigInt
+
+  /// What this invoice is for.
+  invoice_type InvoiceType @default(MEMBERSHIP)
+
+  /// Where it stands. PAID and CANCELLED are terminal.
+  status InvoiceStatus @default(DRAFT)
+
+  /// Date shown on the invoice.
+  issue_date DateTime @db.Date
+
+  /// Date payment is due. CHECK due_date >= issue_date.
+  due_date DateTime @db.Date
+
+  /// Sum of line totals before tax, INR, 2dp. Server-computed; never trusted
+  /// from a client.
+  subtotal Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Sum of line taxes, INR, 2dp.
+  tax_amount Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Grand total including tax, INR, 2dp.
+  total_amount Decimal @default(0) @db.Decimal(14, 2)
+
+  /// How much has been received so far, INR, 2dp.
+  amount_paid Decimal @default(0) @db.Decimal(14, 2)
+
+  /// total_amount - amount_paid, maintained by the payment handler and enforced
+  /// by a CHECK so the two can never disagree.
+  balance_due Decimal @default(0) @db.Decimal(14, 2)
+
+  /// ISO-4217 currency. INR only for now (A-3).
+  currency String @default("INR") @db.Char(3)
+
+  /// Note printed on the invoice.
+  notes String? @db.Text
+
+  /// Storage key of the rendered PDF. Regenerable; the number never changes.
+  pdf_path String? @db.Text
+
+  /// FK to AdminUsers.id — who raised it, when a person did. NULL when the
+  /// platform raised it on approval. ON DELETE SET NULL.
+  created_by_admin_id BigInt?
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The company billed.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Who raised it.
+  created_by AdminUser? @relation("InvoiceCreator", fields: [created_by_admin_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  /// What is being charged for.
+  items InvoiceItem[]
+
+  /// Terms this invoice pays for.
+  terms MembershipTerm[] @relation("TermInvoice")
+
+  @@index([member_id, status, issue_date(sort: Desc)])
+  @@index([status, due_date])
+  @@index([invoice_type, issue_date(sort: Desc)])
+  @@map("Invoices")
+}
+
+/// One charge on an invoice.
+model InvoiceItem {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Invoices.id. ON DELETE CASCADE — lines are owned by their invoice.
+  invoice_id BigInt
+
+  /// What the member is being charged for, in their language.
+  description String @db.VarChar(300)
+
+  /// How many. CHECK quantity > 0.
+  quantity Decimal @default(1) @db.Decimal(10, 2)
+
+  /// Price per unit before tax, INR, 2dp.
+  unit_price Decimal @db.Decimal(14, 2)
+
+  /// Tax percentage applied to this line, e.g. 18.00.
+  tax_rate Decimal @default(0) @db.Decimal(5, 2)
+
+  /// Tax on this line, INR, 2dp. Computed per line, then summed — never taken
+  /// on the invoice total, which rounds differently.
+  tax_amount Decimal @default(0) @db.Decimal(14, 2)
+
+  /// quantity × unit_price + tax_amount, INR, 2dp.
+  line_total Decimal @db.Decimal(14, 2)
+
+  /// FK to FeeStructures.id — the price this line was resolved from, so an
+  /// invoice can always be traced to the fee that produced it. ON DELETE SET NULL.
+  fee_structure_id BigInt?
+
+  /// Display order on the invoice.
+  sort_order Int @default(0)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// The invoice this line belongs to.
+  invoice Invoice @relation(fields: [invoice_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The fee this line was priced from.
+  fee_structure FeeStructure? @relation(fields: [fee_structure_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([invoice_id, sort_order])
+  @@map("InvoiceItems")
+}

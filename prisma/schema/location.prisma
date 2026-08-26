@@ -1,0 +1,117 @@
+// Geography masters (M5 registration): the country → state → city chain the public
+// registration form's cascading selects read.
+//
+// These are masters rather than free text for one reason that shows up in reporting:
+// "Surat", "surat" and "SURAT" are three cities in a text column and one row here.
+// The member's address still keeps its own text copy — see MemberAddresses — so a
+// renamed master never rewrites an address that has already been printed.
+
+/// A country. Seeded, rarely edited, never deleted once an address references it.
+model Country {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// ISO-3166-1 alpha-2, e.g. IN. Unique; this is the stable machine name.
+  iso_code String @unique @db.Char(2)
+
+  /// Display name, e.g. India.
+  name String @db.VarChar(100)
+
+  /// Sort position. Lower first, so India can sit at the top of an Indian form.
+  display_order Int @default(0)
+
+  /// Whether the registration form may offer it.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// States belonging to this country.
+  states State[]
+
+  /// Addresses pinned to this country.
+  addresses MemberAddress[]
+
+  @@index([is_active, display_order])
+  @@map("Countries")
+}
+
+/// A state or province inside a country.
+model State {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Countries.id. ON DELETE RESTRICT — a state must not outlive its country.
+  country_id BigInt
+
+  /// Short code, unique within the country, e.g. GJ.
+  code String @db.VarChar(10)
+
+  /// Display name, e.g. Gujarat.
+  name String @db.VarChar(100)
+
+  /// Whether the registration form may offer it.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The country this state belongs to.
+  country Country @relation(fields: [country_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Cities in this state.
+  cities City[]
+
+  /// Addresses pinned to this state.
+  addresses MemberAddress[]
+
+  @@unique([country_id, code])
+  @@index([country_id, name])
+  @@map("States")
+}
+
+/// A city or town inside a state.
+model City {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to States.id. ON DELETE RESTRICT.
+  state_id BigInt
+
+  /// Display name, e.g. Surat.
+  name String @db.VarChar(100)
+
+  /// Whether the registration form may offer it.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The state this city belongs to.
+  state State @relation(fields: [state_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Addresses pinned to this city.
+  addresses MemberAddress[]
+
+  @@unique([state_id, name])
+  @@index([state_id, name])
+  @@map("Cities")
+}

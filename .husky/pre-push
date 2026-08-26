@@ -1,0 +1,9 @@
+echo "Type-check…"
+npx tsc -p tsconfig.build.json --noEmit || exit 1
+
+echo "Lint…"
+npm run lint || exit 1
+
+# ADR-013: no table and no column may exist without a COMMENT ON.
+echo "Database comment coverage…"
+npm run db:check-comments || exit 1
