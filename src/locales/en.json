@@ -84,7 +84,14 @@
     "invoiceAlreadyPaid": "This invoice is already marked paid",
     "invoiceNotPayable": "A draft or cancelled invoice cannot be marked paid",
     "invoicePaid": "Payment recorded",
-    "receiptNotFound": "No receipt is on file for this invoice"
+    "receiptNotFound": "No receipt is on file for this invoice",
+    "teamOwnerOnly": "Only the company owner can manage team logins",
+    "teamEmailAlreadyOnTeam": "That email is already on your team",
+    "teamEmailInUse": "That email is already in use on this platform",
+    "teamRowNotFound": "That team member was not found",
+    "teamCannotDeactivateOwner": "The company owner cannot be deactivated",
+    "teamInvited": "Invitation sent",
+    "teamStatusChanged": "Team member updated"
   },
   "application": {
     "notFound": "That application no longer exists",

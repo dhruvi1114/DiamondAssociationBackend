@@ -5,6 +5,7 @@ import { END_POINTS } from '@constant';
 import type { RequestHandler } from 'express';
 import { authenticate, authenticateAdmin, authorize, validateRequest } from '@middleware';
 import * as controller from '@modules/member/member.controller';
+import * as teamController from '@modules/member/team.controller';
 import {
   addressSchema,
   adminUpdateMemberSchema,
@@ -54,6 +55,8 @@ memberRouter.post(
   validateRequest({ body: createChangeRequestSchema }),
   controller.requestProfileChange,
 );
+
+memberRouter.get('/me/team', teamController.listTeam);
 
 memberRouter.get('/me/contacts', controller.listContacts);
 memberRouter.post('/me/contacts', validateRequest({ body: contactSchema }), controller.addContact);
