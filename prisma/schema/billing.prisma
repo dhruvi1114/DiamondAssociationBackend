@@ -162,3 +162,83 @@ model Refund {
   @@index([status, createdAt(sort: Desc)])
   @@map("Refunds")
 }
+
+/// A claim that money was sent, awaiting staff verification.
+///
+/// This is the step that stands in for a payment gateway: the payer transfers by
+/// NEFT or UPI, says so with a reference and a receipt, and an admin confirms it
+/// landed. Deliberately generic on `Invoices` rather than on a registration, so
+/// membership invoices reuse the same queue.
+///
+/// Distinct from `Payments`: a submission is what the payer *claims*, a payment
+/// is what the association *confirms*. Collapsing the two would mean an
+/// unverified claim already looked like money received.
+model PaymentSubmission {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Invoices.id. ON DELETE NO ACTION — a financial record is never orphaned.
+  invoice_id BigInt
+
+  /// The member login that submitted it. NULL when a guest did.
+  submitted_by_user_id BigInt?
+
+  /// The guest who submitted it. NULL when a member did.
+  submitted_by_guest_id BigInt?
+
+  /// 0 = NEFT, 1 = UPI, 2 = CHEQUE, 3 = CASH.
+  method Int @db.SmallInt
+
+  /// UTR, cheque number or the reference the payer was given.
+  reference_no String @db.VarChar(100)
+
+  /// What they say they sent, INR, 2dp. CHECK amount > 0.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// The date on the transfer, as the payer states it.
+  paid_on DateTime @db.Date
+
+  /// Storage key of the uploaded receipt, through @helpers/storage.
+  proof_path String? @db.Text
+
+  /// 0 = PENDING, 1 = VERIFIED, 2 = REJECTED.
+  status Int @default(0) @db.SmallInt
+
+  /// Why it was refused. Mandatory when REJECTED — "UTR not found in our
+  /// statement" tells the payer what to do next; a bare rejection does not.
+  rejection_reason String? @db.Text
+
+  /// Which staff account decided.
+  verified_by_admin_id BigInt?
+
+  /// When they decided.
+  verified_at DateTime? @db.Timestamptz(6)
+
+  /// The Payments row created on verification. NULL until then.
+  payment_id BigInt?
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Member login that created this row.
+  created_by_user_id BigInt?
+
+  /// Staff account that created this row.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Member login that last changed this row.
+  updated_by_user_id BigInt?
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// The invoice being settled.
+  invoice Invoice @relation(fields: [invoice_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([invoice_id])
+  @@map("PaymentSubmissions")
+}

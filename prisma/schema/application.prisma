@@ -721,9 +721,10 @@ model Invoice {
   terms MembershipTerm[] @relation("TermInvoice")
 
   /// The receipt issued when this invoice was paid, if it has been.
-  receipt  Receipt?
+  receipt            Receipt?
   /// Money received against this invoice.
-  payments Payment[]
+  payments           Payment[]
+  paymentSubmissions PaymentSubmission[]
 
   @@index([member_id, status, issue_date(sort: Desc)])
   @@index([status, due_date])

@@ -117,7 +117,8 @@ model Event {
   deletedAt DateTime? @db.Timestamptz(6)
 
   /// The price windows for this event.
-  price_tiers EventPriceTier[]
+  price_tiers        EventPriceTier[]
+  eventRegistrations EventRegistration[]
 
   @@index([status, visibility, start_at])
   @@map("Events")
@@ -255,4 +256,242 @@ model GuestRegistrant {
 
   @@index([email])
   @@map("GuestRegistrants")
+}
+
+/// One booking: a company (or a guest) taking seats at an event.
+///
+/// The people are on `EventRegistrationAttendees` — this row is the booking, the
+/// money and the state. There is no attendance table: this module records who is
+/// *going* to attend, not who turned up on the day, which is deliberately out of
+/// scope and can be added later without touching anything here.
+model EventRegistration {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Events.id. ON DELETE NO ACTION — an event with bookings is cancelled,
+  /// never deleted out from under them.
+  event_id BigInt
+
+  /// 0 = MEMBER, 1 = GUEST.
+  registrant_type Int @db.SmallInt
+
+  /// FK to Members.id when a member booked. Exactly one of this and
+  /// `guest_registrant_id` is set, enforced by a CHECK.
+  member_id BigInt?
+
+  /// The login that pressed the button, for the audit trail. NULL for a guest.
+  user_id BigInt?
+
+  /// FK to GuestRegistrants.id when a non-member booked.
+  guest_registrant_id BigInt?
+
+  /// The booking's own reference, quoted in emails and to the office.
+  registration_code String @unique @db.VarChar(30)
+
+  /// 0 PENDING_APPROVAL · 1 PENDING_PAYMENT · 2 PAYMENT_UNDER_VERIFICATION
+  /// 3 CONFIRMED · 4 EXPIRED · 5 CANCELLED · 6 REJECTED · 7 REFUNDED
+  status Int @db.SmallInt
+
+  /// How many seats this booking holds. Kept in step with the attendee rows.
+  attendee_count Int @default(1)
+
+  /// The tier in force when the booking was made. The price is frozen per
+  /// attendee; this records which window produced it.
+  price_tier_id BigInt?
+
+  /// Sum of the frozen attendee prices, INR, 2dp.
+  subtotal Decimal @db.Decimal(14, 2)
+
+  /// Tax on the subtotal at the event's rate.
+  tax_amount Decimal @default(0) @db.Decimal(14, 2)
+
+  /// What is owed.
+  total_amount Decimal @db.Decimal(14, 2)
+
+  /// The invoice raised for it. NULL for a free event, and until approval on an
+  /// event that requires it — which is the point: rejecting costs nothing to
+  /// reverse because no invoice ever existed.
+  invoice_id BigInt?
+
+  /// When the held seats are released if nobody pays. Set from
+  /// `event.payment_hold_days`, and re-set at approval so an admin's delay never
+  /// eats the payer's window.
+  expires_at DateTime? @db.Timestamptz(6)
+
+  /// When staff approved it, on an event that requires approval.
+  approved_at DateTime? @db.Timestamptz(6)
+
+  /// Which staff account approved it.
+  approved_by_admin_id BigInt?
+
+  /// Why it was refused. Mandatory when status is REJECTED.
+  rejection_reason String? @db.Text
+
+  /// When the booker accepted the terms. Stored, not inferred: this is what the
+  /// association quotes back in a refund dispute.
+  terms_accepted_at DateTime @db.Timestamptz(6)
+
+  /// Which version of the terms they accepted.
+  terms_version String @db.VarChar(20)
+
+  /// Whether they consented to event photography.
+  media_consent Boolean @default(false)
+
+  /// Billing snapshot, frozen at booking so a later profile edit cannot rewrite
+  /// what an old invoice said.
+  billing_company_name String? @db.VarChar(200)
+
+  /// GSTIN as it was at booking.
+  gst_number String? @db.VarChar(20)
+
+  /// PAN as it was at booking.
+  pan_number String? @db.VarChar(10)
+
+  /// IEC code as it was at booking.
+  iec_code String? @db.VarChar(20)
+
+  /// Billing address line 1, frozen.
+  billing_line1 String? @db.VarChar(200)
+
+  /// Billing address line 2, frozen.
+  billing_line2 String? @db.VarChar(200)
+
+  /// Billing city, frozen.
+  billing_city String? @db.VarChar(100)
+
+  /// Billing state, frozen.
+  billing_state String? @db.VarChar(100)
+
+  /// Billing pincode, frozen.
+  billing_pincode String? @db.VarChar(10)
+
+  /// Billing country, frozen.
+  billing_country String? @db.VarChar(100)
+
+  /// Who to contact about this booking.
+  contact_name String? @db.VarChar(150)
+
+  /// Where correspondence about this booking goes.
+  contact_email String? @db.Citext
+
+  /// Day-of contact number for the booking.
+  contact_phone String? @db.VarChar(20)
+
+  /// 0 = MEMBER, 1 = ADMIN, 2 = SYSTEM. Who ended it, when it was ended.
+  cancelled_by Int? @db.SmallInt
+
+  /// When it was cancelled or expired.
+  cancelled_at DateTime? @db.Timestamptz(6)
+
+  /// When the booking was made. The date that decides the price tier.
+  registered_at DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Member login that created this row.
+  created_by_user_id BigInt?
+
+  /// Staff account that created this row, when staff booked on someone's behalf.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Member login that last changed this row.
+  updated_by_user_id BigInt?
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// Soft-delete timestamp (UTC).
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The event booked.
+  event Event @relation(fields: [event_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  /// The people this booking is for.
+  attendees EventRegistrationAttendee[]
+
+  @@index([event_id, status])
+  @@index([status, expires_at])
+  @@index([member_id, registered_at(sort: Desc)])
+  @@map("EventRegistrations")
+}
+
+/// One person on a booking — the answer to "who is going to attend".
+///
+/// A row per delegate rather than a count, so the attendee report lists people
+/// rather than "ABC Pvt Ltd — 3", and so each person can be emailed their own
+/// code. Name, designation and price are snapshots: an attendee report from last
+/// year still shows what was true then.
+model EventRegistrationAttendee {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to EventRegistrations.id. ON DELETE CASCADE — owned by the booking.
+  registration_id BigInt
+
+  /// FK to MemberUsers.id — which team login this delegate is. NULL for a guest,
+  /// and SET NULL if the team row is ever removed: the booking still names them.
+  member_user_id BigInt?
+
+  /// This person's own code, the one in their confirmation email.
+  attendee_code String @unique @db.VarChar(30)
+
+  /// Name as it should appear on the badge and the entry list.
+  full_name String @db.VarChar(150)
+
+  /// Job title, snapshot.
+  designation String? @db.VarChar(100)
+
+  /// Where this person's own confirmation goes.
+  email String? @db.Citext
+
+  /// Day-of contact number.
+  phone String? @db.VarChar(20)
+
+  /// The price frozen for this person, INR, 2dp. Frozen at booking, which is why
+  /// paying three weeks later never changes what is owed.
+  unit_price Decimal @db.Decimal(14, 2)
+
+  /// 0 = VEG, 1 = NON_VEG, 2 = JAIN. Collected only when the event asks.
+  food_preference Int? @db.SmallInt
+
+  /// Storage key of the badge photo, when the event asks for one.
+  photo_path String? @db.Text
+
+  /// 0 AADHAAR · 1 PAN · 2 PASSPORT · 3 DL · 4 VOTER.
+  id_type Int? @db.SmallInt
+
+  /// The ID number, when the venue requires one.
+  id_number String? @db.VarChar(50)
+
+  /// Wheelchair access, dietary need, interpreter — anything the venue must know.
+  special_requirement String? @db.Text
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Member login that created this row.
+  created_by_user_id BigInt?
+
+  /// Staff account that created this row.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Member login that last changed this row.
+  updated_by_user_id BigInt?
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// The booking this person is on.
+  registration EventRegistration @relation(fields: [registration_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([registration_id])
+  @@index([email])
+  @@map("EventRegistrationAttendees")
 }
