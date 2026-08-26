@@ -73,6 +73,10 @@ model User {
   /// Membership applications this login filed.
   applications MembershipApplication[]
 
+  /// The company team rows that tie this login to a member. At most one per company;
+  /// a list rather than an optional because the FK lives on MemberUsers.
+  member_user MemberUser[] @relation("MemberUserLogin")
+
   @@index([status, createdAt(sort: Desc)])
   @@map("Users")
 }

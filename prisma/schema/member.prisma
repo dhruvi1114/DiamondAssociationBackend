@@ -175,6 +175,13 @@ model Member {
   /// checkboxes. Many, not one (spec D-6).
   categories MemberCategory[]
 
+  /// Every login that belongs to this firm. The OWNER row here is what
+  /// `primary_user_id` points at; team rows are the colleagues an owner invited.
+  team_users MemberUser[]
+
+  /// Invitations this firm has sent.
+  team_invites MemberTeamInvite[]
+
   @@index([status, createdAt(sort: Desc)])
   @@index([company_type_id])
   @@index([directory_visible, status])
@@ -476,4 +483,121 @@ model MemberCategory {
   @@id([member_id, category_id])
   @@index([category_id])
   @@map("MemberCategories")
+}
+
+/// One login belonging to one member company. Replaces `Members.primary_user_id`
+/// as the way a signed-in user resolves to a company: the primary user is simply
+/// the row here whose `member_role` is 0 (OWNER). The column stays on `Members`
+/// as a pointer so the approval flow and existing code keep working.
+model MemberUser {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Members.id. ON DELETE CASCADE — a team row is meaningless without its firm.
+  member_id BigInt
+
+  /// FK to Users.id. ON DELETE NO ACTION — a login is never deleted out from under a team row.
+  user_id BigInt
+
+  /// 0 = OWNER (the company's primary login, exactly one per member), 1 = TEAM.
+  /// Integer rather than a native enum per the M7 convention; finer permissions deferred.
+  member_role Int @default(1) @db.SmallInt
+
+  /// 0 = INVITED (email sent, password not set), 1 = ACTIVE, 2 = DEACTIVATED.
+  status Int @default(0) @db.SmallInt
+
+  /// Which member login sent the invite. NULL for the OWNER row created at approval.
+  invited_by_user_id BigInt?
+
+  /// When the invitee set their password and the row went ACTIVE.
+  accepted_at DateTime? @db.Timestamptz(6)
+
+  /// When an owner switched this person off. Kept for history rather than deleted.
+  deactivated_at DateTime? @db.Timestamptz(6)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Member login that created this row, when a member did. NULL + NULL means the system did.
+  created_by_user_id BigInt?
+
+  /// Staff account that created this row, when staff did.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Member login that last changed this row.
+  updated_by_user_id BigInt?
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// The firm this login belongs to.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The login itself.
+  user User @relation("MemberUserLogin", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  @@unique([member_id, user_id])
+  @@index([member_id, status])
+  @@map("MemberUsers")
+}
+
+/// An outstanding invitation to join a company's team. Acceptance runs through the
+/// existing password-reset token, so there is exactly one password-setting path.
+model MemberTeamInvite {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to Members.id. ON DELETE CASCADE — owned by the firm.
+  member_id BigInt
+
+  /// FK to Users.id — the login created for the invitee. ON DELETE NO ACTION.
+  user_id BigInt
+
+  /// Address the invite was sent to, as typed by the owner.
+  email String @db.Citext
+
+  /// Name as typed by the owner; copied onto Users.full_name.
+  full_name String @db.VarChar(150)
+
+  /// Job title shown on the team screen and pre-filled into event attendee rows.
+  designation String? @db.VarChar(100)
+
+  /// Which member login sent it.
+  invited_by_user_id BigInt
+
+  /// When the invite stops being usable. Mirrors the password-reset token expiry.
+  expires_at DateTime @db.Timestamptz(6)
+
+  /// Set when the invitee sets their password.
+  accepted_at DateTime? @db.Timestamptz(6)
+
+  /// Set when the owner cancels the invite before it is accepted.
+  revoked_at DateTime? @db.Timestamptz(6)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Member login that created this row.
+  created_by_user_id BigInt?
+
+  /// Staff account that created this row.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Member login that last changed this row.
+  updated_by_user_id BigInt?
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// The firm inviting.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([member_id, createdAt(sort: Desc)])
+  @@map("MemberTeamInvites")
 }
