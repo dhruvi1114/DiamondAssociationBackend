@@ -40,6 +40,7 @@ import type {
 } from '@modules/auth/auth.types';
 import { getAdminAccess, invalidateAdminAccess } from '@modules/rbac/rbac.cache';
 import { loadAdminAccess } from '@modules/rbac/rbac.repository';
+import { activateInvitedTeamRow } from '@modules/member/team.activation';
 import { AppError } from '@utils/appError';
 import { signAdminAccessToken, signMemberAccessToken } from '@utils/jwt';
 
@@ -932,6 +933,11 @@ export const setInitialPassword = async (
       failed_login_count: 0,
       locked_until: null,
     });
+
+    // A team invite and a post-approval password link are the same email. If this
+    // login was invited onto a company roster, the row goes ACTIVE in the same
+    // transaction as the password — never one without the other.
+    await activateInvitedTeamRow(tx, user.id);
 
     await writeAudit(tx, {
       action: AUDIT_ACTIONS.USER_EMAIL_VERIFIED,
