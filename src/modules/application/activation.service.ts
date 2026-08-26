@@ -313,7 +313,11 @@ export const activateApprovedApplication = async (
   const taxAmount = membershipTax.add(applicationFeeTax);
   const total = subtotal.add(taxAmount);
 
-  const termLabel = `${fee.category_name}${fee.tier_name ? ` — ${fee.tier_name}` : ''} membership`;
+  // `fee.category_name` is null when the price came from a category-agnostic
+  // FeeStructures row (`category_id IS NULL` — priced the same for every
+  // category). "Membership" alone is the truthful label there; inventing a
+  // category name the fee was not actually priced for would be wrong.
+  const termLabel = `${fee.category_name ?? 'Membership'}${fee.tier_name ? ` — ${fee.tier_name}` : ''}`;
   const period = termWindow.prorated
     ? `${termWindow.months} months, pro-rata to ${asDate(termWindow.validTill)}`
     : `${termWindow.months} months`;

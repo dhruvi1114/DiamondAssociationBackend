@@ -13,7 +13,9 @@ import {
   createChangeRequestSchema,
   idParamSchema,
   invoicePaymentParamsSchema,
+  listInvoicesSchema,
   listMembersSchema,
+  ownInvoicePaymentParamsSchema,
   statusChangeSchema,
   updateProfileSchema,
 } from '@modules/member/member.types';
@@ -94,6 +96,12 @@ memberRouter.delete(
   controller.removeOwnDocument,
 );
 
+memberRouter.post(
+  '/me/invoices/:invoiceId/pay',
+  validateRequest({ params: ownInvoicePaymentParamsSchema }),
+  controller.payOwnInvoice,
+);
+
 /**
  * `/api/v1/documents/:id/download` — one route, both audiences.
  *
@@ -143,6 +151,23 @@ documentRouter.get(
   controller.downloadDocument,
 );
 
+/** `/api/v1/invoices` — invoice and receipt PDFs, both audiences (M5). */
+export const invoiceRouter = Router();
+
+invoiceRouter.get(
+  '/:invoiceId/pdf',
+  authenticateEitherAudience,
+  validateRequest({ params: ownInvoicePaymentParamsSchema }),
+  controller.downloadInvoicePdf,
+);
+
+invoiceRouter.get(
+  '/:invoiceId/receipt/pdf',
+  authenticateEitherAudience,
+  validateRequest({ params: ownInvoicePaymentParamsSchema }),
+  controller.downloadReceiptPdf,
+);
+
 /** `/api/v1/admin/members` — staff member management (A-07…A-09, A-13). */
 export const memberAdminRouter = Router();
 
@@ -160,6 +185,14 @@ memberAdminRouter.get(
   authorize('member.view'),
   validateRequest({ params: idParamSchema }),
   controller.getMemberDetail,
+);
+
+/** `/api/v1/admin/invoices` — every invoice, org-wide, A-14. */
+memberAdminRouter.get(
+  END_POINTS.INVOICES,
+  authorize('invoice.view'),
+  validateRequest({ query: listInvoicesSchema }),
+  controller.listInvoicesAdmin,
 );
 
 memberAdminRouter.patch(

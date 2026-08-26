@@ -9,7 +9,12 @@ import {
   applicationSuperAdminRouter,
 } from '@modules/application/public.routes';
 import { mastersAdminRouter, mastersPublicRouter } from '@modules/masters/masters.routes';
-import { documentRouter, memberAdminRouter, memberRouter } from '@modules/member/member.routes';
+import {
+  documentRouter,
+  invoiceRouter,
+  memberAdminRouter,
+  memberRouter,
+} from '@modules/member/member.routes';
 import { rbacRouter } from '@modules/rbac/rbac.routes';
 import {
   brandingPublicRouter,
@@ -49,6 +54,9 @@ router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, mastersPublicRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.MEMBERS}`, memberRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.DOCUMENTS}`, documentRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, memberAdminRouter);
+
+// M5 — invoice and receipt PDFs, both audiences.
+router.use(`${END_POINTS.V1}${END_POINTS.INVOICES}`, invoiceRouter);
 
 // M4 — applications, the approval workflow and activation.
 router.use(`${END_POINTS.V1}${END_POINTS.APPLICATIONS}`, applicationRouter);

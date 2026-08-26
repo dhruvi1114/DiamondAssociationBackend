@@ -201,6 +201,8 @@ export const AUDIT_ACTIONS = {
   INVOICE_CANCELLED: 'invoice.cancelled',
   /** An invoice was recorded as paid (offline payment). */
   INVOICE_PAID: 'invoice.paid',
+  /** A receipt was generated for a paid invoice. */
+  RECEIPT_ISSUED: 'receipt.issued',
   /** A membership term was opened. */
   TERM_CREATED: 'membership_term.created',
 } as const;

@@ -124,6 +124,12 @@ export const APPLICATION_SORT_COLUMNS = [
   'createdAt',
 ] as const;
 
+/** `YYYY-MM-DD`, as a date filter arrives on the query string. */
+const dateOnly = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.invalidDate')
+  .optional();
+
 export const listApplicationsSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce
@@ -144,6 +150,23 @@ export const listApplicationsSchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((value) => value === 'true'),
+  /**
+   * Submitted-date window, inclusive at both ends, `YYYY-MM-DD`.
+   *
+   * The submitted date, not the created one: a draft is not in this list at all,
+   * and "how many came in last week" is the question the queue is asked. It is
+   * also the column the list sorts by out of the box.
+   */
+  submitted_from: dateOnly,
+  submitted_to: dateOnly,
+  /**
+   * Primary-address city / state, by NAME, comma-separated like every other
+   * list filter here. Names rather than master ids because the id columns on
+   * `MemberAddresses` are nullable while the text ones are not — see the note
+   * on `listApplications`.
+   */
+  city: csv(trimmed(100).min(1)),
+  state: csv(trimmed(100).min(1)),
   /** Narrows to applications carrying at least one PENDING document — the Verification tab. */
   has_pending_documents: z
     .enum(['true', 'false'])

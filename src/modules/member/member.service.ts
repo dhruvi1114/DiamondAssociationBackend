@@ -1,16 +1,24 @@
+import fs from 'fs/promises';
+import path from 'path';
 import { InvoiceStatus, MemberStatus, Prisma, TermStatus } from '@prisma/client';
 import { AUDIT_ACTIONS } from '@constant/audit.constant';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { prisma } from '@db/prisma';
 import { writeAudit } from '@helpers/audit';
+import { renderInvoicePdf } from '@helpers/pdf/invoiceTemplate';
+import { renderReceiptPdf } from '@helpers/pdf/receiptTemplate';
+import { buildStorageKey, storage } from '@helpers/storage';
 import * as repo from '@modules/member/member.repository';
 import { APPROVAL_REQUIRED_FIELDS } from '@modules/member/member.types';
+import { readBranding } from '@modules/settings/branding.service';
+import { listSettings } from '@modules/settings/settings.service';
 import type {
   AddressInput,
   AdminUpdateMemberInput,
   ChangeCategoryInput,
   ContactInput,
   CreateChangeRequestInput,
+  ListInvoicesQuery,
   ListMembersQuery,
   UpdateProfileInput,
 } from '@modules/member/member.types';
@@ -448,6 +456,24 @@ export const listMembers = async (query: ListMembersQuery) => {
     statuses: query.status,
     categoryIds: query.category_id?.map(BigInt),
     tierId: query.tier_id ? BigInt(query.tier_id) : undefined,
+    cities: query.city,
+    states: query.state,
+    sortBy: query.sortBy,
+    sortOrder: query.sortOrder,
+    limit: query.limit,
+    offset: (query.page - 1) * query.limit,
+  });
+
+  return { rows, total: rows.length > 0 ? Number(rows[0]!.total) : 0 };
+};
+
+/** Org-wide invoice list for Accounts, A-14 — every member's invoices, not just one. */
+export const listInvoicesAdmin = async (query: ListInvoicesQuery) => {
+  const rows = await repo.listInvoices(prisma, {
+    search: query.search,
+    statuses: query.status,
+    issuedFrom: query.issued_from,
+    issuedTo: query.issued_to,
     sortBy: query.sortBy,
     sortOrder: query.sortOrder,
     limit: query.limit,
@@ -605,16 +631,35 @@ export const changeStatus = async (
 
 export const listStatusHistory = (id: bigint) => repo.listStatusHistory(prisma, id);
 
+const nextReceiptNumber = async (tx: Prisma.TransactionClient): Promise<string> => {
+  const now = new Date();
+  const quarter = Math.floor(now.getUTCMonth() / 3) + 1;
+  const prefix = `RC${now.getUTCFullYear()}${String(quarter).padStart(2, '0')}`;
+  const count = await tx.receipt.count({ where: { receipt_number: { startsWith: prefix } } });
+
+  return `${prefix}${String(count + 1).padStart(3, '0')}`;
+};
+
+interface PaymentAttribution {
+  /** NULL for a self-service payment (`member.repository.ts`'s "system did it" convention). */
+  changedByAdminId: bigint | null;
+  audit: ReturnType<typeof adminAudit> | ReturnType<typeof memberAudit>;
+}
+
 /**
- * Record an offline payment against an invoice, in full (`payment.record`).
+ * The one transaction both payment paths share: invoice → PAID, its
+ * membership term(s) → ACTIVE, the member → ACTIVE if this was their first
+ * payment, a receipt issued, and an audit row — all or nothing.
  *
- * No online checkout exists yet — a member pays by bank transfer or similar
- * and staff confirm it landed. Marking the invoice PAID and, when it is the
- * membership's first invoice, moving the member PENDING → ACTIVE and its term
- * PENDING_PAYMENT → ACTIVE happen together: a paid invoice with a member still
- * pending is exactly the inconsistent state this guards against.
+ * `recordInvoicePayment` (admin, offline payment) and `payOwnInvoice`
+ * (member, self-service) differ only in who gets credited for the status
+ * change and how the audit row is attributed — see `PaymentAttribution`.
  */
-export const recordInvoicePayment = async (memberId: bigint, invoiceId: bigint, actor: Actor) => {
+const applyInvoicePayment = async (
+  memberId: bigint,
+  invoiceId: bigint,
+  attribution: PaymentAttribution,
+) => {
   const invoice = await prisma.invoice.findFirst({
     where: { id: invoiceId, member_id: memberId, deletedAt: null },
   });
@@ -659,12 +704,21 @@ export const recordInvoicePayment = async (memberId: bigint, invoiceId: bigint, 
         from_status: member.status,
         to_status: MemberStatus.ACTIVE,
         reason: `Invoice ${invoice.invoice_number} paid`,
-        changed_by_admin_id: actor.id,
+        changed_by_admin_id: attribution.changedByAdminId,
       });
     }
 
+    const receipt = await tx.receipt.create({
+      data: {
+        receipt_number: await nextReceiptNumber(tx),
+        invoice_id: invoiceId,
+        member_id: memberId,
+        amount: invoice.total_amount,
+      },
+    });
+
     await writeAudit(tx, {
-      ...adminAudit(actor),
+      ...attribution.audit,
       action: AUDIT_ACTIONS.INVOICE_PAID,
       entityName: 'Invoices',
       entityId: invoiceId,
@@ -672,6 +726,239 @@ export const recordInvoicePayment = async (memberId: bigint, invoiceId: bigint, 
       after: { status: InvoiceStatus.PAID, amount_paid: invoice.total_amount.toFixed(2) },
     });
 
-    return { invoice: paidInvoice, member: updatedMember };
+    return { invoice: paidInvoice, member: updatedMember, receipt };
   });
+};
+
+/**
+ * Record an offline payment against an invoice, in full (`payment.record`).
+ *
+ * No online checkout exists yet — a member pays by bank transfer or similar
+ * and staff confirm it landed. Marking the invoice PAID and, when it is the
+ * membership's first invoice, moving the member PENDING → ACTIVE and its term
+ * PENDING_PAYMENT → ACTIVE happen together: a paid invoice with a member still
+ * pending is exactly the inconsistent state this guards against.
+ */
+export const recordInvoicePayment = (memberId: bigint, invoiceId: bigint, actor: Actor) =>
+  applyInvoicePayment(memberId, invoiceId, {
+    changedByAdminId: actor.id,
+    audit: adminAudit(actor),
+  });
+
+/** Self-service: a member paying their own invoice from the portal. */
+export const payOwnInvoice = (memberId: bigint, invoiceId: bigint, actor: Actor) =>
+  applyInvoicePayment(memberId, invoiceId, {
+    changedByAdminId: null,
+    audit: memberAudit(actor),
+  });
+
+const orgInfo = async () => {
+  const rows = await listSettings();
+  const byKey = new Map(rows.map((row) => [row.key, row.value ?? '']));
+
+  return {
+    name: byKey.get('organisation.name') || 'Association',
+    legal_name:
+      byKey.get('organisation.legal_name') || byKey.get('organisation.name') || 'Association',
+    gstin: byKey.get('organisation.gstin') ?? '',
+    address: byKey.get('organisation.address') ?? '',
+    support_email: byKey.get('organisation.support_email') ?? '',
+  };
+};
+
+/** `null` whenever no logo has been uploaded — the header falls back to text-only. */
+/**
+ * The association's uploaded logo (System Settings) wins; the bundled ILGDA
+ * lockup — the same `brand/logo.png` the admin sidebar falls back to,
+ * `BrandMark.tsx` — covers every association that has not uploaded one yet.
+ * Never a blank header.
+ */
+const BUNDLED_LOGO_PATH = path.join(__dirname, '../../assets/brand/logo.png');
+
+const orgLogo = async (): Promise<Buffer | null> => {
+  try {
+    const { stream } = await readBranding('logo');
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks);
+  } catch {
+    try {
+      return await fs.readFile(BUNDLED_LOGO_PATH);
+    } catch {
+      return null;
+    }
+  }
+};
+
+/** Same preference order as the admin Company card: registered, then primary, then first. */
+const formatMemberAddress = (
+  addresses: Array<{
+    address_type: string;
+    is_primary: boolean;
+    line1: string;
+    line2: string | null;
+    city: string;
+    state: string;
+    country: string;
+    pincode: string;
+  }>,
+): string | null => {
+  const chosen =
+    addresses.find((a) => a.address_type === 'REGISTERED') ??
+    addresses.find((a) => a.is_primary) ??
+    addresses[0];
+  if (!chosen) return null;
+
+  return [chosen.line1, chosen.line2, chosen.city, chosen.state, chosen.country, chosen.pincode]
+    .filter(Boolean)
+    .join(', ');
+};
+
+/**
+ * Generates the invoice PDF on first request and caches it in storage — an
+ * ISSUED invoice's line items never change (`billing-payment.md` §2: "only
+ * DRAFT invoices are editable"), so the rendered PDF is stable too.
+ */
+export const getInvoicePdf = async (
+  invoiceId: bigint,
+  viewer: { memberId: bigint | null; isAdmin: boolean },
+) => {
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, deletedAt: null },
+    include: {
+      items: { orderBy: { sort_order: 'asc' } },
+      member: { include: { addresses: { where: { deletedAt: null } } } },
+    },
+  });
+  if (!invoice) throw notFound('member.invoiceNotFound');
+
+  const isOwner = viewer.memberId !== null && viewer.memberId === invoice.member_id;
+  if (!isOwner && !viewer.isAdmin) throw notFound('member.invoiceNotFound');
+
+  if (invoice.pdf_path && (await storage.current.exists(invoice.pdf_path))) {
+    return {
+      stream: await storage.current.getStream(invoice.pdf_path),
+      filename: `${invoice.invoice_number}.pdf`,
+    };
+  }
+
+  const [org, logo] = await Promise.all([orgInfo(), orgLogo()]);
+
+  const buffer = await renderInvoicePdf({
+    org,
+    logo,
+    member: {
+      company_name: invoice.member.company_name,
+      legal_name: invoice.member.legal_name,
+      gst_number: invoice.member.gst_number,
+      address: formatMemberAddress(invoice.member.addresses),
+    },
+    invoice: {
+      invoice_number: invoice.invoice_number,
+      issue_date: invoice.issue_date,
+      due_date: invoice.due_date,
+      subtotal: invoice.subtotal.toFixed(2),
+      tax_amount: invoice.tax_amount.toFixed(2),
+      total_amount: invoice.total_amount.toFixed(2),
+      currency: invoice.currency,
+      notes: invoice.notes,
+    },
+    items: invoice.items.map((item) => ({
+      description: item.description,
+      quantity: item.quantity.toFixed(2),
+      unit_price: item.unit_price.toFixed(2),
+      tax_rate: item.tax_rate.toFixed(2),
+      tax_amount: item.tax_amount.toFixed(2),
+      line_total: item.line_total.toFixed(2),
+    })),
+  });
+
+  const key = buildStorageKey(['invoices', String(invoice.id)], `${invoice.invoice_number}.pdf`);
+  await storage.current.put(key, buffer, { mime: 'application/pdf', size: buffer.byteLength });
+  await prisma.invoice.update({ where: { id: invoice.id }, data: { pdf_path: key } });
+
+  return {
+    stream: await storage.current.getStream(key),
+    filename: `${invoice.invoice_number}.pdf`,
+  };
+};
+
+export const getReceiptPdf = async (
+  invoiceId: bigint,
+  viewer: { memberId: bigint | null; isAdmin: boolean },
+) => {
+  const receipt = await prisma.receipt.findFirst({
+    where: { invoice_id: invoiceId },
+    include: {
+      invoice: {
+        include: {
+          member: { include: { addresses: { where: { deletedAt: null } } } },
+          items: { orderBy: { sort_order: 'asc' } },
+        },
+      },
+    },
+  });
+  if (!receipt) throw notFound('member.receiptNotFound');
+
+  const isOwner = viewer.memberId !== null && viewer.memberId === receipt.member_id;
+  if (!isOwner && !viewer.isAdmin) throw notFound('member.receiptNotFound');
+
+  if (receipt.pdf_path && (await storage.current.exists(receipt.pdf_path))) {
+    return {
+      stream: await storage.current.getStream(receipt.pdf_path),
+      filename: `${receipt.receipt_number}.pdf`,
+    };
+  }
+
+  const [org, logo] = await Promise.all([orgInfo(), orgLogo()]);
+
+  const buffer = await renderReceiptPdf({
+    org,
+    logo,
+    member: {
+      company_name: receipt.invoice.member.company_name,
+      legal_name: receipt.invoice.member.legal_name,
+      gst_number: receipt.invoice.member.gst_number,
+      address: formatMemberAddress(receipt.invoice.member.addresses),
+    },
+    invoice: {
+      invoice_number: receipt.invoice.invoice_number,
+      issue_date: receipt.invoice.issue_date,
+      due_date: receipt.invoice.due_date,
+      subtotal: receipt.invoice.subtotal.toFixed(2),
+      tax_amount: receipt.invoice.tax_amount.toFixed(2),
+      total_amount: receipt.invoice.total_amount.toFixed(2),
+      currency: receipt.invoice.currency,
+    },
+    items: receipt.invoice.items.map((item) => ({
+      description: item.description,
+      quantity: item.quantity.toFixed(2),
+      unit_price: item.unit_price.toFixed(2),
+      tax_rate: item.tax_rate.toFixed(2),
+      line_total: item.line_total.toFixed(2),
+    })),
+    receipt: {
+      receipt_number: receipt.receipt_number,
+      amount: receipt.amount.toFixed(2),
+      paid_at: receipt.paid_at,
+    },
+  });
+
+  const key = buildStorageKey(['receipts', String(receipt.id)], `${receipt.receipt_number}.pdf`);
+  await storage.current.put(key, buffer, { mime: 'application/pdf', size: buffer.byteLength });
+  await prisma.receipt.update({ where: { id: receipt.id }, data: { pdf_path: key } });
+
+  await writeAudit(prisma, {
+    actorType: viewer.isAdmin ? 'ADMIN' : 'MEMBER',
+    actorId: viewer.memberId ?? undefined,
+    action: AUDIT_ACTIONS.RECEIPT_ISSUED,
+    entityName: 'Receipts',
+    entityId: receipt.id,
+    after: { receipt_number: receipt.receipt_number },
+  });
+
+  return {
+    stream: await storage.current.getStream(key),
+    filename: `${receipt.receipt_number}.pdf`,
+  };
 };

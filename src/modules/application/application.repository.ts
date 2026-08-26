@@ -153,6 +153,16 @@ export interface ApplicationQueueRow {
   updated_by: string | null;
   /** Only the FINAL approval sets this — an intermediate stage clearing does not. */
   approved_by: string | null;
+  /**
+   * Who refused it, and only on a REJECT — the terminal refusal at the
+   * resubmission cap. A RETURN is a correction round, not a rejection, and
+   * naming a reviewer beside an application the applicant is still working on
+   * would read as a decision that has not been made.
+   */
+  rejected_by: string | null;
+  /** Primary address of the applying company. Free text; always populated. */
+  city: string | null;
+  state: string | null;
   total: bigint;
 }
 
@@ -175,6 +185,17 @@ export const listApplications = (
     myRoleCodes?: string[] | undefined;
     /** Verification tab: only applications carrying at least one PENDING document. */
     hasPendingDocuments?: boolean | undefined;
+    /** Inclusive `YYYY-MM-DD` bounds on `submitted_at`. Either may stand alone. */
+    submittedFrom?: string | undefined;
+    submittedTo?: string | undefined;
+    /**
+     * Primary-address city / state, matched on the NAME rather than the master
+     * id. The id columns are nullable and some rows predate them, but the text
+     * columns are NOT NULL and always carry the same words the master holds —
+     * so matching on the name is the one that cannot silently drop a row.
+     */
+    cities?: string[] | undefined;
+    states?: string[] | undefined;
     sortBy: string;
     sortOrder: 'asc' | 'desc';
     limit: number;
@@ -189,6 +210,10 @@ export const listApplications = (
   const stageIds = params.stageIds?.length ? params.stageIds : null;
   const categoryIds = params.categoryIds?.length ? params.categoryIds : null;
   const pendingOnly = params.hasPendingDocuments === true;
+  const submittedFrom = params.submittedFrom ?? null;
+  const submittedTo = params.submittedTo ?? null;
+  const cities = params.cities?.length ? params.cities : null;
+  const states = params.states?.length ? params.states : null;
 
   return db.$queryRaw<ApplicationQueueRow[]>`
     SELECT a.id,
@@ -234,6 +259,16 @@ export const listApplications = (
                AND aa.to_status = 'APPROVED'
              ORDER BY aa.acted_at DESC
              LIMIT 1) AS approved_by,
+           (SELECT au.full_name
+              FROM "ApprovalActions" aa
+              JOIN "AdminUsers" au ON au.id = aa.admin_user_id
+              JOIN "ApprovalRequests" ar ON ar.id = aa.approval_request_id
+             WHERE ar.application_id = a.id
+               AND aa.action = 'REJECT'
+             ORDER BY aa.acted_at DESC
+             LIMIT 1) AS rejected_by,
+           addr.city,
+           addr.state,
            count(*) OVER () AS total
       FROM "MembershipApplications" a
       JOIN "MembershipCategories" c ON c.id = a.category_id
@@ -243,6 +278,16 @@ export const listApplications = (
       LEFT JOIN "MembershipTiers" t ON t.id = a.tier_id
       LEFT JOIN "ApprovalStages"  s ON s.id = a.current_stage_id
       LEFT JOIN "Roles"           r ON r.id = s.approver_role_id
+      -- LATERAL, not a plain join: a company may hold a registered, a factory
+      -- and a correspondence address, and joining them all would multiply the
+      -- row. One address per application, the primary one, chosen here.
+      LEFT JOIN LATERAL (
+        SELECT ma.city, ma.state
+          FROM "MemberAddresses" ma
+         WHERE ma.member_id = a.member_id AND ma."deletedAt" IS NULL
+         ORDER BY ma.is_primary DESC, ma.id ASC
+         LIMIT 1
+      ) addr ON TRUE
      WHERE a."deletedAt" IS NULL
        -- A draft belongs to the applicant alone; it is not work for anyone yet.
        AND a.status <> 'DRAFT'
@@ -256,6 +301,13 @@ export const listApplications = (
             OR a.company_name ILIKE ${search}
             OR a.application_number ILIKE ${search}
             OR a.gst_number ILIKE ${search})
+       -- submitted_at is a timestamp, not a date, so the upper bound is "before
+       -- the next day" rather than "<= that day" — otherwise everything after
+       -- midnight on the last day of the window falls outside it.
+       AND (${submittedFrom}::date IS NULL OR a.submitted_at >= ${submittedFrom}::date)
+       AND (${submittedTo}::date IS NULL OR a.submitted_at < ${submittedTo}::date + 1)
+       AND (${cities}::text[] IS NULL OR addr.city = ANY(${cities}::text[]))
+       AND (${states}::text[] IS NULL OR addr.state = ANY(${states}::text[]))
        AND (${pendingOnly} IS FALSE OR EXISTS (
              SELECT 1 FROM "ApplicationDocuments" d
               WHERE d.application_id = a.id AND d."deletedAt" IS NULL

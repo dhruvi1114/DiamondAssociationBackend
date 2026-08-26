@@ -83,7 +83,8 @@
     "invoiceNotFound": "That invoice no longer exists",
     "invoiceAlreadyPaid": "This invoice is already marked paid",
     "invoiceNotPayable": "A draft or cancelled invoice cannot be marked paid",
-    "invoicePaid": "Payment recorded"
+    "invoicePaid": "Payment recorded",
+    "receiptNotFound": "No receipt is on file for this invoice"
   },
   "application": {
     "notFound": "That application no longer exists",

@@ -380,6 +380,10 @@ export const listForReview = async (query: ListApplicationsQuery, actor: Actor) 
     // A super admin's "mine" is everything — they own every queue.
     myRoleCodes: query.mine && !actor.isSuperAdmin ? actor.roles : undefined,
     hasPendingDocuments: query.has_pending_documents,
+    submittedFrom: query.submitted_from,
+    submittedTo: query.submitted_to,
+    cities: query.city,
+    states: query.state,
     sortBy: query.sortBy,
     sortOrder: query.sortOrder,
     limit: query.limit,

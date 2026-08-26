@@ -162,6 +162,9 @@ model Member {
   /// Invoices raised against this company.
   invoices Invoice[]
 
+  /// Receipts issued for this company's paid invoices.
+  receipts Receipt[]
+
   /// The login that owns this company record.
   primary_user User @relation(fields: [primary_user_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
 

@@ -714,10 +714,59 @@ model Invoice {
   /// Terms this invoice pays for.
   terms MembershipTerm[] @relation("TermInvoice")
 
+  /// The receipt issued when this invoice was paid, if it has been.
+  receipt Receipt?
+
   @@index([member_id, status, issue_date(sort: Desc)])
   @@index([status, due_date])
   @@index([invoice_type, issue_date(sort: Desc)])
   @@map("Invoices")
+}
+
+/// Proof of payment for one invoice. One per invoice — this build only ever
+/// pays an invoice in full, in one click, so there is nothing to split.
+model Receipt {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Human-facing number, format RC + year + calendar quarter + 3-digit
+  /// sequence restarting each quarter, e.g. RC202603001 — same shape as
+  /// `Invoice.invoice_number` (client decision, 2026-08-13), different prefix.
+  receipt_number String @unique @db.VarChar(30)
+
+  /// FK to Invoices.id — the invoice this receipt is for. ON DELETE RESTRICT:
+  /// a receipt is a financial record and is never orphaned. One receipt per
+  /// invoice, enforced by the unique constraint below.
+  invoice_id BigInt @unique
+
+  /// FK to Members.id — who paid. Denormalised off the invoice so a receipt
+  /// still names the payer even if the invoice's own member link is ever
+  /// changed (it isn't, today, but the column exists to make that impossible
+  /// to get wrong).
+  member_id BigInt
+
+  /// Amount received, INR, 2dp. Always the invoice's total_amount today —
+  /// this build has no partial payments.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// When the payment was recorded.
+  paid_at DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Storage key of the rendered PDF, through `@helpers/storage` — same
+  /// adapter as KYC documents and invoice PDFs.
+  pdf_path String? @db.Text
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// The invoice this receipt closes out.
+  invoice Invoice @relation(fields: [invoice_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Who paid.
+  member Member @relation(fields: [member_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([member_id, paid_at(sort: Desc)])
+  @@map("Receipts")
 }
 
 /// One charge on an invoice.

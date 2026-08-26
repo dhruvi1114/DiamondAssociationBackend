@@ -1,4 +1,4 @@
-import { AddressType, MemberStatus } from '@prisma/client';
+import { AddressType, InvoiceStatus, MemberStatus } from '@prisma/client';
 import { z } from 'zod';
 
 /**
@@ -124,6 +124,10 @@ export const invoicePaymentParamsSchema = z.object({
   invoiceId: z.string().regex(/^\d+$/, 'validation.invalidId'),
 });
 
+export const ownInvoicePaymentParamsSchema = z.object({
+  invoiceId: z.string().regex(/^\d+$/, 'validation.invalidId'),
+});
+
 /* -------------------------------------------------------------------------- */
 /* Admin                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -145,7 +149,52 @@ export const listMembersSchema = z.object({
   status: csv(z.nativeEnum(MemberStatus)),
   category_id: csv(z.string().regex(/^\d+$/, 'validation.invalidId')),
   tier_id: z.string().regex(/^\d+$/, 'validation.invalidId').optional(),
+  /**
+   * Primary-address city / state, by NAME, comma-separated like the other list
+   * filters. Names rather than master ids: the id columns on `MemberAddresses`
+   * are nullable, the text ones are not.
+   */
+  city: csv(trimmed(100).min(1)),
+  state: csv(trimmed(100).min(1)),
   sortBy: z.enum(MEMBER_SORT_COLUMNS).default('createdAt'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+});
+
+export const INVOICE_SORT_COLUMNS = [
+  'issue_date',
+  'due_date',
+  'total_amount',
+  'invoice_number',
+] as const;
+
+/** `YYYY-MM-DD`, as a date filter arrives on the query string. */
+const dateOnly = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.invalidDate')
+  .optional();
+
+export const listInvoicesSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .default(20)
+    .transform((value) => Math.min(value, 100)),
+  search: trimmed(150).min(1).optional(),
+  status: csv(z.nativeEnum(InvoiceStatus)),
+  /**
+   * Issue-date window, inclusive at both ends. Same `YYYY-MM-DD` shape and the
+   * same `_from`/`_to` naming the masters list filters already use.
+   *
+   * The ISSUE date, not the due date: it is the one an invoice always has, the
+   * one the list sorts by out of the box, and the one "show me what we billed in
+   * August" means. A due-date window is a different question and would be its
+   * own pair of params.
+   */
+  issued_from: dateOnly,
+  issued_to: dateOnly,
+  sortBy: z.enum(INVOICE_SORT_COLUMNS).default('issue_date'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
 });
 
@@ -192,6 +241,7 @@ export type CreateChangeRequestInput = z.infer<typeof createChangeRequestSchema>
 export type ContactInput = z.infer<typeof contactSchema>;
 export type AddressInput = z.infer<typeof addressSchema>;
 export type ListMembersQuery = z.infer<typeof listMembersSchema>;
+export type ListInvoicesQuery = z.infer<typeof listInvoicesSchema>;
 export type AdminUpdateMemberInput = z.infer<typeof adminUpdateMemberSchema>;
 export type ChangeCategoryInput = z.infer<typeof changeCategorySchema>;
 export type StatusChangeInput = z.infer<typeof statusChangeSchema>;

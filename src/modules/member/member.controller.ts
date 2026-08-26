@@ -1,4 +1,4 @@
-import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import type { NextFunction, Request, Response, RequestHandler } from 'express';
 import { MemberStatus } from '@prisma/client';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { RES_STATUS } from '@constant/message.constant';
@@ -309,6 +309,17 @@ export const getMemberDetail = handler(async (req, res) => {
   handleApiResponse(res, { responseType: RES_STATUS.GET, data: serialise(data) });
 });
 
+export const listInvoicesAdmin = handler(async (req, res) => {
+  const query = req.query as unknown as Parameters<typeof service.listInvoicesAdmin>[0];
+  const result = await service.listInvoicesAdmin(query);
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.GET,
+    data: serialise(result.rows),
+    pagination: { page: query.page, limit: query.limit, total: result.total },
+  });
+});
+
 export const adminUpdateMember = handler(async (req, res) => {
   const updated = await service.adminUpdateMember(
     BigInt(req.params.id as string),
@@ -367,6 +378,59 @@ export const recordInvoicePayment = handler(async (req, res) => {
     messageKey: 'member.invoicePaid',
     data: serialise(updated),
   });
+});
+
+export const payOwnInvoice = handler(async (req, res) => {
+  const member = await ownMember(req);
+  const updated = await service.payOwnInvoice(
+    member.id,
+    BigInt(req.params.invoiceId as string),
+    actor(req),
+  );
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.ACTION,
+    messageKey: 'member.invoicePaid',
+    data: serialise(updated),
+  });
+});
+
+/**
+ * Shared by both audiences, same shape as `downloadDocument`: the service
+ * decides entitlement (owner or admin) and answers 404 to everyone else, so
+ * an id cannot be used to probe for someone else's invoice.
+ */
+const streamPdf = (res: Response, file: { stream: NodeJS.ReadableStream; filename: string }) => {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${file.filename.replace(/["\r\n]/g, '')}"`,
+  );
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, no-store');
+  file.stream.pipe(res);
+};
+
+export const downloadInvoicePdf = handler(async (req, res) => {
+  const isAdmin = req.actor?.type === 'ADMIN';
+  const memberId = isAdmin ? null : (await ownMember(req)).id;
+  const file = await service.getInvoicePdf(BigInt(req.params.invoiceId as string), {
+    memberId,
+    isAdmin,
+  });
+
+  streamPdf(res, file);
+});
+
+export const downloadReceiptPdf = handler(async (req, res) => {
+  const isAdmin = req.actor?.type === 'ADMIN';
+  const memberId = isAdmin ? null : (await ownMember(req)).id;
+  const file = await service.getReceiptPdf(BigInt(req.params.invoiceId as string), {
+    memberId,
+    isAdmin,
+  });
+
+  streamPdf(res, file);
 });
 
 export const listMemberDocuments = handler(async (req, res) => {

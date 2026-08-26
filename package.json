@@ -2,7 +2,7 @@
   "name": "association-platform-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Association Management Platform \u2014 Node.js/TypeScript/Express/Prisma backend.",
+  "description": "Association Management Platform — Node.js/TypeScript/Express/Prisma backend.",
   "main": "dist/index.js",
   "engines": {
     "node": ">=24 <25"
@@ -31,7 +31,7 @@
     "db:check-comments": "tsx scripts/check-db-comments.ts",
     "decrypt": "tsx scripts/decrypt.ts",
     "prepare": "husky || true",
-    "copy:assets": "node -e \"require('fs').cpSync('src/locales','dist/locales',{recursive:true,filter:(s)=>!s.endsWith('.ts')})\"",
+    "copy:assets": "node -e \"require('fs').cpSync('src/locales','dist/locales',{recursive:true,filter:(s)=>!s.endsWith('.ts')}); require('fs').cpSync('src/assets','dist/assets',{recursive:true})\"",
     "otp": "tsx scripts/show-otp.ts",
     "backfill:resubmit-links": "tsx scripts/backfill-resubmit-links.ts",
     "backfill:member-documents": "tsx scripts/backfill-member-documents.ts"
@@ -43,6 +43,7 @@
     ]
   },
   "dependencies": {
+    "@fontsource/geist-sans": "^5.3.0",
     "@prisma/client": "^6.0.0",
     "@types/multer": "^2.2.0",
     "bcryptjs": "^2.4.3",
@@ -58,6 +59,7 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.16",
     "pako": "^2.1.0",
+    "pdfkit": "^0.20.1",
     "winston": "^3.13.0",
     "zod": "^3.24.0"
   },
@@ -72,6 +74,7 @@
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^6.4.17",
     "@types/pako": "^2.0.3",
+    "@types/pdfkit": "^0.17.6",
     "@typescript-eslint/eslint-plugin": "^8.15.0",
     "@typescript-eslint/parser": "^8.15.0",
     "cross-env": "^7.0.3",
