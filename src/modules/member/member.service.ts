@@ -9,6 +9,7 @@ import { renderInvoicePdf } from '@helpers/pdf/invoiceTemplate';
 import { renderReceiptPdf } from '@helpers/pdf/receiptTemplate';
 import { buildStorageKey, storage } from '@helpers/storage';
 import * as repo from '@modules/member/member.repository';
+import { MEMBER_ROLE, MEMBER_USER_STATUS } from '@modules/member/team.constants';
 import { APPROVAL_REQUIRED_FIELDS } from '@modules/member/member.types';
 import { readBranding } from '@modules/settings/branding.service';
 import { listSettings } from '@modules/settings/settings.service';
@@ -110,7 +111,14 @@ export const getOrCreateOwnMember = async (userId: bigint, actor: Actor) => {
     // Two first-page requests race here: both read no member, both insert, and
     // `primary_user_id @unique` fails one of them. The loser is not an error —
     // the row it wanted now exists, written by the request it lost to.
-    if (!isUniqueViolation(error, 'primary_user_id')) throw error;
+    // Either unique index can be the one that fires: `primary_user_id` on Members
+    // or `(member_id, user_id)` / the one-owner-per-member index on MemberUsers.
+    if (
+      !isUniqueViolation(error, 'primary_user_id') &&
+      !isUniqueViolation(error, 'MemberUsers')
+    ) {
+      throw error;
+    }
 
     const won = await repo.findMemberByUserId(prisma, userId);
     if (!won) throw error;
@@ -127,6 +135,16 @@ const provisionMember = async (user: { id: bigint; full_name: string }, actor: A
       // renames it to the trading name on their first edit.
       company_name: user.full_name,
       status: MemberStatus.DRAFT,
+    });
+
+    // The company resolves to its login through MemberUsers, so the OWNER row is
+    // part of creating the company, not a later step. Same transaction: a member
+    // with no owner row would be unreachable by the person who just created it.
+    await repo.createOwnerTeamRow(tx, {
+      member_id: created.id,
+      user_id: user.id,
+      member_role: MEMBER_ROLE.OWNER,
+      status: MEMBER_USER_STATUS.ACTIVE,
     });
 
     await repo.recordStatusChange(tx, {

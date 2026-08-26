@@ -37,6 +37,22 @@ export const findMemberById = (db: Db, id: bigint) =>
 export const createMember = (db: Db, data: Prisma.MemberUncheckedCreateInput) =>
   db.member.create({ data });
 
+/**
+ * The company's OWNER team row.
+ *
+ * Written in the same transaction as the `Members` row, because
+ * `findMemberByUserId` resolves through `MemberUsers`: a company created without
+ * this row would be invisible to the very login that owns it, and the next
+ * request would try to provision it a second time.
+ *
+ * ACTIVE rather than INVITED — this login already has a password; it is the
+ * account that just signed in.
+ */
+export const createOwnerTeamRow = (
+  db: Db,
+  data: { member_id: bigint; user_id: bigint; member_role: number; status: number },
+) => db.memberUser.create({ data: { ...data, accepted_at: new Date() } });
+
 export const updateMember = (db: Db, id: bigint, data: Prisma.MemberUpdateInput) =>
   db.member.update({ where: { id }, data });
 
