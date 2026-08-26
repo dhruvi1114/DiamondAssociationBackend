@@ -1,0 +1,158 @@
+/// Money actually received against an invoice.
+///
+/// Distinct from `Receipts`: a receipt is the document handed to the payer, a
+/// payment is the event itself — method, reference, provider, success or
+/// failure. Without this record there is nothing for a refund to point at, which
+/// is why the event module cannot refund a cancelled event today.
+///
+/// Enum columns are `smallint` codes rather than native enums, the convention for
+/// tables created from M7 onward. Codes are append-only.
+model Payment {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Human-facing number, PY + year + calendar quarter + 3-digit sequence
+  /// restarting each quarter, e.g. PY202603001 — the shape `invoice_number` and
+  /// `receipt_number` already use, with a different prefix.
+  payment_number String @unique @db.VarChar(30)
+
+  /// FK to Invoices.id. ON DELETE NO ACTION — a financial record is never
+  /// orphaned or cascade-deleted.
+  invoice_id BigInt
+
+  /// FK to Members.id — who paid. Nullable so a non-member can pay for an event
+  /// later; today every row has one.
+  member_id BigInt?
+
+  /// Amount received, INR, 2dp. CHECK amount > 0 — a zero payment is not an event.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// ISO-4217 currency. INR only for now (A-3).
+  currency String @default("INR") @db.Char(3)
+
+  /// 0 = ONLINE, 1 = NEFT, 2 = CHEQUE, 3 = CASH, 4 = UPI, 5 = ADJUSTMENT.
+  method Int @db.SmallInt
+
+  /// `MANUAL` for an offline payment recorded by staff, otherwise the gateway
+  /// code. The provider interface (A-5) is what makes adding Razorpay a config
+  /// change rather than a rewrite.
+  provider String @default("MANUAL") @db.VarChar(50)
+
+  /// Gateway order id. Unique where present, so one order cannot be banked twice.
+  provider_order_id String? @db.VarChar(100)
+
+  /// Gateway payment id. Unique where present — the idempotency guard that stops
+  /// a replayed webhook being applied a second time (R-7).
+  provider_payment_id String? @db.VarChar(100)
+
+  /// 0 = INITIATED, 1 = PENDING, 2 = SUCCESS, 3 = FAILED, 4 = CANCELLED,
+  /// 5 = REFUNDED, 6 = PARTIALLY_REFUNDED.
+  status Int @db.SmallInt
+
+  /// When the money landed. NULL until it does.
+  paid_at DateTime? @db.Timestamptz(6)
+
+  /// Why a gateway declined, verbatim, so support can quote it back.
+  failure_reason String? @db.Text
+
+  /// Staff account that recorded an offline payment. NULL for self-service.
+  recorded_by_admin_id BigInt?
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Member login that created this row, when a member did.
+  created_by_user_id BigInt?
+
+  /// Staff account that created this row, when staff did.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Member login that last changed this row.
+  updated_by_user_id BigInt?
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// The invoice this payment settles.
+  invoice Invoice @relation(fields: [invoice_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  /// The paying member.
+  member Member? @relation(fields: [member_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  /// The document issued for this payment.
+  receipt Receipt?
+
+  /// Money sent back out of this payment.
+  refunds Refund[]
+
+  @@index([invoice_id])
+  @@index([member_id, paid_at(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("Payments")
+}
+
+/// Money returned out of a payment: a cancelled event, a mistaken charge.
+///
+/// A separate row rather than a negative amount on the payment, so the payment
+/// stays a faithful record of what was actually received and the refund carries
+/// its own approval trail.
+model Refund {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Human-facing number, RF + year + calendar quarter + 3-digit sequence.
+  refund_number String @unique @db.VarChar(30)
+
+  /// FK to Payments.id. ON DELETE NO ACTION — never orphaned.
+  payment_id BigInt
+
+  /// Amount returned, INR, 2dp. CHECK amount > 0. May be less than the payment:
+  /// a partial refund is a smaller row, never an edit to the payment.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// Why, in the association's words. Shown to the payer and quoted in disputes.
+  reason String? @db.Text
+
+  /// 0 = REQUESTED, 1 = PROCESSING, 2 = COMPLETED, 3 = FAILED, 4 = REJECTED.
+  status Int @default(0) @db.SmallInt
+
+  /// Gateway refund id. Unique where present, so one refund cannot be sent twice.
+  provider_refund_id String? @db.VarChar(100)
+
+  /// Staff account that raised it.
+  requested_by_admin_id BigInt?
+
+  /// Staff account that approved it. NULL while still REQUESTED.
+  approved_by_admin_id BigInt?
+
+  /// When the money actually went back.
+  processed_at DateTime? @db.Timestamptz(6)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Member login that created this row. Always NULL today; refunds are staff-raised.
+  created_by_user_id BigInt?
+
+  /// Staff account that created this row.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Member login that last changed this row.
+  updated_by_user_id BigInt?
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// The payment being returned.
+  payment Payment @relation(fields: [payment_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  @@index([payment_id])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("Refunds")
+}

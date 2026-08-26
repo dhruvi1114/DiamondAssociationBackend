@@ -715,7 +715,9 @@ model Invoice {
   terms MembershipTerm[] @relation("TermInvoice")
 
   /// The receipt issued when this invoice was paid, if it has been.
-  receipt Receipt?
+  receipt  Receipt?
+  /// Money received against this invoice.
+  payments Payment[]
 
   @@index([member_id, status, issue_date(sort: Desc)])
   @@index([status, due_date])
@@ -739,6 +741,10 @@ model Receipt {
   /// invoice, enforced by the unique constraint below.
   invoice_id BigInt @unique
 
+  /// FK to Payments.id — the payment this document acknowledges. Nullable only
+  /// because one receipt predates the Payments table; every new receipt has one.
+  payment_id BigInt? @unique
+
   /// FK to Members.id — who paid. Denormalised off the invoice so a receipt
   /// still names the payer even if the invoice's own member link is ever
   /// changed (it isn't, today, but the column exists to make that impossible
@@ -758,6 +764,9 @@ model Receipt {
 
   /// Row creation timestamp (UTC).
   createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// The payment this receipt acknowledges.
+  payment Payment? @relation(fields: [payment_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
   /// The invoice this receipt closes out.
   invoice Invoice @relation(fields: [invoice_id], references: [id], onDelete: Restrict, onUpdate: Cascade)

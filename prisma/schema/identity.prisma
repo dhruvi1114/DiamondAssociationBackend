@@ -77,6 +77,9 @@ model User {
   /// a list rather than an optional because the FK lives on MemberUsers.
   member_user MemberUser[] @relation("MemberUserLogin")
 
+  /// Team invitations issued against this login.
+  team_invites MemberTeamInvite[] @relation("TeamInviteUser")
+
   @@index([status, createdAt(sort: Desc)])
   @@map("Users")
 }

@@ -175,6 +175,9 @@ model Member {
   /// checkboxes. Many, not one (spec D-6).
   categories MemberCategory[]
 
+  /// Payments this firm has made.
+  payments Payment[]
+
   /// Every login that belongs to this firm. The OWNER row here is what
   /// `primary_user_id` points at; team rows are the colleagues an owner invited.
   team_users MemberUser[]
@@ -597,6 +600,11 @@ model MemberTeamInvite {
 
   /// The firm inviting.
   member Member @relation(fields: [member_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// The login created for the invitee. Declared so the FK the migration adds is
+  /// visible to the datamodel — otherwise every future `migrate diff` proposes
+  /// dropping it.
+  user User @relation("TeamInviteUser", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
   @@index([member_id, createdAt(sort: Desc)])
   @@map("MemberTeamInvites")
