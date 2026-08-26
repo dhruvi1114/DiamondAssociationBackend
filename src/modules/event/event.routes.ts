@@ -73,6 +73,20 @@ eventAdminRouter.delete(
 );
 
 eventAdminRouter.get(
+  `${END_POINTS.EVENTS}/:id/attendees/export`,
+  authorize('event.view'),
+  validateRequest({ params: idParamSchema }),
+  controller.exportAttendees,
+);
+
+eventAdminRouter.get(
+  `${END_POINTS.EVENTS}/:id/attendees/export`,
+  authorize('event.view'),
+  validateRequest({ params: idParamSchema }),
+  controller.exportAttendees,
+);
+
+eventAdminRouter.get(
   `${END_POINTS.EVENTS}/:id/attendees`,
   authorize('event.view'),
   validateRequest({ params: idParamSchema }),

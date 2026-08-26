@@ -803,3 +803,31 @@ export const getBookingSummary = async (id: bigint) => {
     })),
   };
 };
+
+/**
+ * The same list the screen shows, for export.
+ *
+ * Deliberately built on `listAttendees` rather than its own query. "The export
+ * matches the on-screen filter" is a definition-of-done item for this module,
+ * and the only way to keep that true as filters are added is for there to be one
+ * query with two renderings — not two queries somebody has to remember to change
+ * together.
+ *
+ * Paged through rather than read in one go: a large expo is thousands of
+ * delegates, and a single unbounded read is how an export takes the API process
+ * down with it.
+ */
+export const exportAttendees = async (query: { eventId: bigint; statuses?: number[] }) => {
+  const PAGE = 500;
+  const rows: Awaited<ReturnType<typeof listAttendees>>['rows'] = [];
+
+  for (let page = 1; ; page += 1) {
+    const chunk = await listAttendees({ ...query, page, limit: PAGE });
+
+    rows.push(...chunk.rows);
+
+    if (chunk.rows.length < PAGE) break;
+  }
+
+  return rows;
+};

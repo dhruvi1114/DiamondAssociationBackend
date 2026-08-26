@@ -9,6 +9,21 @@ import { handleApiResponse } from '@utils/handleResponse';
 import { prisma } from '@db/prisma';
 import * as memberRepo from '@modules/member/member.repository';
 import { resolveEventAccessToken } from '@modules/event/registration.tokens';
+import { toWorkbook, XLSX_MIME } from '@helpers/excel';
+
+/** Codes are what the wire carries; the caterer reading the file wants words. */
+const FOOD_LABELS: Record<number, string> = { 0: 'Veg', 1: 'Non-veg', 2: 'Jain' };
+
+const REGISTRATION_STATUS_LABELS: Record<number, string> = {
+  0: 'Awaiting approval',
+  1: 'Awaiting payment',
+  2: 'Payment being verified',
+  3: 'Confirmed',
+  4: 'Expired',
+  5: 'Cancelled',
+  6: 'Rejected',
+  7: 'Refunded',
+};
 
 /**
  * HTTP layer for events.
@@ -439,4 +454,61 @@ export const submitGuestPayment = handler(async (req, res) => {
     messageKey: 'event.paymentSubmitted',
     data: serialise(result),
   });
+});
+
+/**
+ * `GET /admin/events/:id/attendees/export` — the same list, as an Excel file.
+ *
+ * Same query, same filter, same order as the screen; only the rendering differs.
+ * Codes become words, because the person opening this file is a caterer or a
+ * receptionist, and "1" is not a dietary requirement.
+ */
+export const exportAttendees = handler(async (req, res) => {
+  const eventId = BigInt(req.params.id as string);
+
+  const [rows, event] = await Promise.all([
+    registration.exportAttendees({ eventId, statuses: statusList(req.query.status) }),
+    service.getEvent(eventId),
+  ]);
+
+  const workbook = await toWorkbook(
+    rows,
+    [
+      { header: 'Name', value: (row) => row.full_name, width: 24 },
+      { header: 'Designation', value: (row) => row.designation, width: 20 },
+      { header: 'Organisation', value: (row) => row.booked_by, width: 28 },
+      { header: 'Email', value: (row) => row.email, width: 28 },
+      // Text, not a number: a phone number is not arithmetic, and as a number
+      // Excel eats the leading zero and offers to render it in scientific
+      // notation.
+      { header: 'Phone', value: (row) => row.phone, width: 16 },
+      { header: 'Member', value: (row) => (row.registrant_type === 0 ? 'Yes' : 'No'), width: 10 },
+      // A number, so the office can total the column.
+      { header: 'Fee', value: (row) => Number(row.unit_price), width: 12 },
+      { header: 'Food', value: (row) => FOOD_LABELS[row.food_preference ?? -1] ?? '', width: 12 },
+      { header: 'Special requirement', value: (row) => row.special_requirement, width: 30 },
+      { header: 'Booking', value: (row) => row.registration_code, width: 18 },
+      { header: 'Attendee code', value: (row) => row.attendee_code, width: 20 },
+      {
+        header: 'Status',
+        value: (row) => REGISTRATION_STATUS_LABELS[row.status] ?? String(row.status),
+        width: 22,
+      },
+    ],
+    { sheetName: 'Attendees' },
+  );
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  const safeTitle =
+    event.title
+      .replace(/[^A-Za-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'event';
+
+  res.setHeader('Content-Type', XLSX_MIME);
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="attendees-${safeTitle}-${stamp}.xlsx"`,
+  );
+  res.status(200).send(workbook);
 });
