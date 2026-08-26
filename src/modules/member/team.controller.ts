@@ -83,15 +83,31 @@ export const inviteTeamMember = handler(async (req, res) => {
 
   requireOwner(context);
 
-  const row = await service.inviteTeamMember(
+  const row = await service.inviteTeamMember(req.body as never, context, contextFromRequest(req));
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.CREATE,
+    messageKey: 'member.teamInvited',
+    data: { row },
+  });
+});
+
+/** `PATCH /members/me/team/:id/status` — switch a colleague on or off. Owner only. */
+export const setTeamMemberStatus = handler(async (req, res) => {
+  const context = await teamContext(req);
+
+  requireOwner(context);
+
+  const row = await service.setTeamMemberStatus(
+    BigInt(req.params.id),
     req.body as never,
     context,
     contextFromRequest(req),
   );
 
   handleApiResponse(res, {
-    responseType: RES_STATUS.CREATE,
-    messageKey: 'member.teamInvited',
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'member.teamStatusChanged',
     data: { row },
   });
 });

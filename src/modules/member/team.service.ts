@@ -7,7 +7,7 @@ import { MEMBER_ROLE, MEMBER_USER_STATUS } from '@modules/member/team.constants'
 import * as repo from '@modules/member/team.repository';
 import { AppError } from '@utils/appError';
 import type { TeamMemberRow } from '@modules/member/team.repository';
-import type { InviteTeamMemberInput } from '@modules/member/team.types';
+import type { InviteTeamMemberInput, TeamStatusInput } from '@modules/member/team.types';
 
 /**
  * The company's team roster.
@@ -125,5 +125,66 @@ export const inviteTeamMember = async (
       status: MEMBER_USER_STATUS.INVITED,
       accepted_at: null,
     };
+  });
+};
+
+/**
+ * Switch a colleague's login on or off.
+ *
+ * The OWNER row is refused outright. `findMemberByUserId` only resolves ACTIVE
+ * rows, so deactivating the owner would lock the company out of its own account
+ * with no way back in from the member side — the one action here that is not
+ * reversible by the person taking it.
+ *
+ * Deactivating keeps the row rather than deleting it: the person may come back,
+ * and their name is still attached to whatever they did.
+ */
+export const setTeamMemberStatus = async (
+  id: bigint,
+  input: TeamStatusInput,
+  context: TeamContext,
+  request: TeamRequestContext,
+) => {
+  const row = await repo.findTeamRow(prisma, context.memberId, id);
+
+  // Scoped to the caller's own company, so another firm's row is "not found"
+  // rather than "forbidden" — a 403 would confirm the row exists.
+  if (!row) {
+    throw new AppError({
+      errorType: ERROR_TYPES.NOT_FOUND,
+      messageKey: 'member.teamRowNotFound',
+    });
+  }
+
+  if (row.member_role === MEMBER_ROLE.OWNER) {
+    throw new AppError({
+      errorType: ERROR_TYPES.VALIDATION_ERROR,
+      messageKey: 'member.teamCannotDeactivateOwner',
+    });
+  }
+
+  const nextStatus = input.active ? MEMBER_USER_STATUS.ACTIVE : MEMBER_USER_STATUS.DEACTIVATED;
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await repo.updateTeamRow(tx, id, {
+      status: nextStatus,
+      deactivated_at: input.active ? null : new Date(),
+      updated_by_user_id: context.userId,
+    });
+
+    await writeAudit(tx, {
+      action: AUDIT_ACTIONS.MEMBER_TEAM_STATUS_CHANGED,
+      entityName: 'MemberUsers',
+      entityId: id,
+      actorType: ACTOR_TYPES.MEMBER,
+      actorId: context.userId,
+      before: { status: row.status },
+      after: { status: nextStatus },
+      ip: request.ip,
+      userAgent: request.userAgent,
+      requestId: request.requestId,
+    });
+
+    return { id: updated.id.toString(), status: updated.status };
   });
 };

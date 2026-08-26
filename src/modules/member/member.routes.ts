@@ -21,7 +21,7 @@ import {
   updateProfileSchema,
 } from '@modules/member/member.types';
 import { verifyDocumentSchema } from '@modules/document/document.types';
-import { inviteTeamMemberSchema } from '@modules/member/team.types';
+import { inviteTeamMemberSchema, teamStatusSchema } from '@modules/member/team.types';
 
 /**
  * Uploads are held in memory, not written to a temp path.
@@ -63,6 +63,12 @@ memberRouter.post(
   '/me/team',
   validateRequest({ body: inviteTeamMemberSchema }),
   teamController.inviteTeamMember,
+);
+
+memberRouter.patch(
+  '/me/team/:id/status',
+  validateRequest({ params: idParamSchema, body: teamStatusSchema }),
+  teamController.setTeamMemberStatus,
 );
 
 memberRouter.get('/me/contacts', controller.listContacts);

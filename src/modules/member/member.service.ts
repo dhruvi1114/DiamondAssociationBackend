@@ -113,10 +113,7 @@ export const getOrCreateOwnMember = async (userId: bigint, actor: Actor) => {
     // the row it wanted now exists, written by the request it lost to.
     // Either unique index can be the one that fires: `primary_user_id` on Members
     // or `(member_id, user_id)` / the one-owner-per-member index on MemberUsers.
-    if (
-      !isUniqueViolation(error, 'primary_user_id') &&
-      !isUniqueViolation(error, 'MemberUsers')
-    ) {
+    if (!isUniqueViolation(error, 'primary_user_id') && !isUniqueViolation(error, 'MemberUsers')) {
       throw error;
     }
 
