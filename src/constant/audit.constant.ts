@@ -223,6 +223,22 @@ export const AUDIT_ACTIONS = {
   EVENT_CANCELLED: 'event.cancelled',
   /** An event with no registrations was removed. */
   EVENT_DELETED: 'event.deleted',
+  /** Someone booked seats at an event. */
+  EVENT_REGISTERED: 'event_registration.created',
+  /** Staff approved a booking on an event that vets its attendees. */
+  EVENT_REGISTRATION_APPROVED: 'event_registration.approved',
+  /** Staff refused a booking. */
+  EVENT_REGISTRATION_REJECTED: 'event_registration.rejected',
+  /** A booking was called off, by the booker or by staff. */
+  EVENT_REGISTRATION_CANCELLED: 'event_registration.cancelled',
+  /** An unpaid hold ran out and its seats went back. */
+  EVENT_REGISTRATION_EXPIRED: 'event_registration.expired',
+  /** A payer said they had paid, and gave a reference. */
+  PAYMENT_SUBMITTED: 'payment_submission.created',
+  /** Staff confirmed the money landed. */
+  PAYMENT_VERIFIED: 'payment_submission.verified',
+  /** Staff could not find the money and said why. */
+  PAYMENT_SUBMISSION_REJECTED: 'payment_submission.rejected',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

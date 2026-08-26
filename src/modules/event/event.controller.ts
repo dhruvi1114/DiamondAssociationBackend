@@ -2,8 +2,11 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { RES_STATUS } from '@constant/message.constant';
 import * as service from '@modules/event/event.service';
+import * as registration from '@modules/event/registration.service';
 import { AppError } from '@utils/appError';
 import { handleApiResponse } from '@utils/handleResponse';
+import { prisma } from '@db/prisma';
+import * as memberRepo from '@modules/member/member.repository';
 
 /**
  * HTTP layer for events.
@@ -193,4 +196,42 @@ export const getMemberEvent = handler(async (req, res) => {
   }
 
   handleApiResponse(res, { responseType: RES_STATUS.GET, data: serialise(event) });
+});
+
+/**
+ * `POST /events/:slug/register` — a member books seats for its team.
+ *
+ * The company comes from the token, never from the body: an id in the body would
+ * let one member book against another's account (rbac.md §5).
+ */
+export const registerForEvent = handler(async (req, res) => {
+  const userId = req.actor?.id;
+
+  if (userId === undefined) {
+    throw new AppError({ errorType: ERROR_TYPES.UNAUTHORIZED, messageKey: 'auth.unauthorized' });
+  }
+
+  const member = await memberRepo.findMemberByUserId(prisma, userId);
+
+  if (!member) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'member.notFound' });
+  }
+
+  const booking = await registration.registerAsMember(
+    req.params.slug as string,
+    req.body as never,
+    {
+      userId,
+      memberId: member.id,
+      ip: req.ip ?? null,
+      userAgent: req.get('user-agent') ?? null,
+      requestId: req.requestId ?? null,
+    },
+  );
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.CREATE,
+    messageKey: 'event.registered',
+    data: serialise(booking),
+  });
 });

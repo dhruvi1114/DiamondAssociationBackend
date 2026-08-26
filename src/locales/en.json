@@ -190,7 +190,15 @@
     "alreadyPublished": "This event is already published",
     "noPriceTier": "Add at least one price tier before publishing",
     "hasRegistrations": "This event has registrations and cannot be cancelled here yet",
-    "deleted": "Event removed"
+    "deleted": "Event removed",
+    "notOpenForRegistration": "This event is not open for registration",
+    "registrationNotOpenYet": "Registration for this event has not opened yet",
+    "registrationClosed": "Registration for this event has closed",
+    "noPriceToday": "Registration is not open for this event",
+    "soldOut": "There are not enough seats left for this booking",
+    "alreadyRegistered": "Your company has already registered for this event",
+    "registered": "Registration created",
+    "membersOnly": "This event is open to members only"
   },
   "communication": {
     "noticeNotFound": "Notice not found",

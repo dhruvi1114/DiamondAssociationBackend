@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { END_POINTS } from '@constant';
 import { authenticate, authenticateAdmin, authorize, validateRequest } from '@middleware';
 import * as controller from '@modules/event/event.controller';
+import { registerAsMemberSchema } from '@modules/event/registration.types';
 import {
   cancelEventSchema,
   createEventSchema,
@@ -77,3 +78,9 @@ eventMemberRouter.use(authenticate);
 
 eventMemberRouter.get(END_POINTS.EVENTS, controller.listMemberEvents);
 eventMemberRouter.get(`${END_POINTS.EVENTS}/:slug`, controller.getMemberEvent);
+
+eventMemberRouter.post(
+  `${END_POINTS.EVENTS}/:slug/register`,
+  validateRequest({ body: registerAsMemberSchema }),
+  controller.registerForEvent,
+);

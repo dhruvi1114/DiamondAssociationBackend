@@ -102,6 +102,18 @@ export const SETTING_KEYS = {
   APPLICATION_FEE_AMOUNT: 'billing.application_fee_amount',
   /** Consent paragraph on the public registration form (spec D-14). */
   REGISTRATION_CONSENT_TEXT: 'registration.consent_text',
+  /**
+   * How many days a booking holds its seats before an unpaid hold is released.
+   * Payment reminders are derived from this number rather than configured
+   * separately, so shortening the hold cannot leave a reminder firing after the
+   * seats are already gone.
+   */
+  EVENT_PAYMENT_HOLD_DAYS: 'event.payment_hold_days',
+  /**
+   * How long after expiry a member still gets member pricing on events. A firm
+   * three days late renewing is not an outsider.
+   */
+  MEMBERSHIP_GRACE_DAYS: 'membership.grace_days',
 } as const;
 
 /** The two values `billing.renewal_basis` may hold. */
