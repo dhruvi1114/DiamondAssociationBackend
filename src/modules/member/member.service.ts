@@ -8,6 +8,11 @@ import { writeAudit } from '@helpers/audit';
 import { renderInvoicePdf } from '@helpers/pdf/invoiceTemplate';
 import { renderReceiptPdf } from '@helpers/pdf/receiptTemplate';
 import { buildStorageKey, storage } from '@helpers/storage';
+import {
+  MANUAL_PROVIDER,
+  PAYMENT_METHOD,
+  PAYMENT_STATUS,
+} from '@modules/billing/payment.constants';
 import * as repo from '@modules/member/member.repository';
 import { MEMBER_ROLE, MEMBER_USER_STATUS } from '@modules/member/team.constants';
 import { APPROVAL_REQUIRED_FIELDS } from '@modules/member/member.types';
@@ -646,6 +651,23 @@ export const changeStatus = async (
 
 export const listStatusHistory = (id: bigint) => repo.listStatusHistory(prisma, id);
 
+/**
+ * Next payment number, PY + year + quarter + 3-digit sequence.
+ *
+ * Same counting scheme as `nextReceiptNumber`: a count inside the payment
+ * transaction. It is not collision-proof under true concurrency, but the unique
+ * index on `payment_number` is — a loser gets a unique violation rather than a
+ * duplicate number, which is the same trade the receipt numbering already makes.
+ */
+const nextPaymentNumber = async (tx: Prisma.TransactionClient): Promise<string> => {
+  const now = new Date();
+  const quarter = Math.floor(now.getUTCMonth() / 3) + 1;
+  const prefix = `PY${now.getUTCFullYear()}${String(quarter).padStart(2, '0')}`;
+  const count = await tx.payment.count({ where: { payment_number: { startsWith: prefix } } });
+
+  return `${prefix}${String(count + 1).padStart(3, '0')}`;
+};
+
 const nextReceiptNumber = async (tx: Prisma.TransactionClient): Promise<string> => {
   const now = new Date();
   const quarter = Math.floor(now.getUTCMonth() / 3) + 1;
@@ -723,10 +745,28 @@ const applyInvoicePayment = async (
       });
     }
 
+    // Invoice → payment → receipt, in that order and in one transaction. The
+    // payment is the record of money received; the receipt is the document that
+    // acknowledges it, and a refund later points at the payment, not the receipt.
+    const payment = await tx.payment.create({
+      data: {
+        payment_number: await nextPaymentNumber(tx),
+        invoice_id: invoiceId,
+        member_id: memberId,
+        amount: invoice.total_amount,
+        method: PAYMENT_METHOD.NEFT,
+        provider: MANUAL_PROVIDER,
+        status: PAYMENT_STATUS.SUCCESS,
+        paid_at: new Date(),
+        recorded_by_admin_id: attribution.changedByAdminId,
+      },
+    });
+
     const receipt = await tx.receipt.create({
       data: {
         receipt_number: await nextReceiptNumber(tx),
         invoice_id: invoiceId,
+        payment_id: payment.id,
         member_id: memberId,
         amount: invoice.total_amount,
       },

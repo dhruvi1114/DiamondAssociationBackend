@@ -5,6 +5,8 @@ const invoiceUpdate = vi.fn();
 const membershipTermUpdateMany = vi.fn();
 const receiptCount = vi.fn();
 const receiptCreate = vi.fn();
+const paymentCount = vi.fn();
+const paymentCreate = vi.fn();
 const auditLogCreate = vi.fn();
 const findMemberById = vi.fn();
 const updateMember = vi.fn();
@@ -13,6 +15,7 @@ const recordStatusChange = vi.fn();
 const tx = {
   invoice: { update: invoiceUpdate },
   membershipTerm: { updateMany: membershipTermUpdateMany },
+  payment: { count: paymentCount, create: paymentCreate },
   receipt: { count: receiptCount, create: receiptCreate },
   auditLog: { create: auditLogCreate },
 };
@@ -54,6 +57,8 @@ describe('payOwnInvoice', () => {
     findMemberById.mockResolvedValue({ id: 5n, status: 'PENDING', joined_on: null });
     updateMember.mockResolvedValue({ id: 5n, status: 'ACTIVE' });
     invoiceUpdate.mockResolvedValue({ id: 42n, status: 'PAID' });
+    paymentCount.mockResolvedValue(0);
+    paymentCreate.mockResolvedValue({ id: 7n, payment_number: 'PY202603001' });
     receiptCount.mockResolvedValue(0);
     receiptCreate.mockResolvedValue({ id: 1n, receipt_number: 'RC202603001' });
   });
@@ -109,6 +114,8 @@ describe('recordInvoicePayment (admin path, unchanged behaviour)', () => {
     findMemberById.mockResolvedValue({ id: 5n, status: 'PENDING', joined_on: null });
     updateMember.mockResolvedValue({ id: 5n, status: 'ACTIVE' });
     invoiceUpdate.mockResolvedValue({ id: 42n, status: 'PAID' });
+    paymentCount.mockResolvedValue(0);
+    paymentCreate.mockResolvedValue({ id: 7n, payment_number: 'PY202603001' });
     receiptCount.mockResolvedValue(0);
     receiptCreate.mockResolvedValue({ id: 1n, receipt_number: 'RC202603001' });
   });
