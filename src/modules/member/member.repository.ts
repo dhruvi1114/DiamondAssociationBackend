@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { MemberStatus } from '@prisma/client';
 import type { Db } from '@db/prisma';
+import { MEMBER_USER_STATUS } from '@modules/member/team.constants';
 
 /**
  * Data access for the member record.
@@ -11,8 +12,24 @@ import type { Db } from '@db/prisma';
  * 501 queries (ADR-005, database-indexes.md).
  */
 
+/**
+ * The company a signed-in member belongs to.
+ *
+ * Resolution goes through `MemberUsers` rather than `Members.primary_user_id`,
+ * because a company can hold several logins — the owner plus the colleagues they
+ * invited — and every one of them must land on the same company record.
+ *
+ * Only ACTIVE rows resolve. An INVITED login has not set a password yet and a
+ * DEACTIVATED one has been switched off by its owner; neither may act for the
+ * firm, and filtering here means no caller can forget to check.
+ */
 export const findMemberByUserId = (db: Db, userId: bigint) =>
-  db.member.findFirst({ where: { primary_user_id: userId, deletedAt: null } });
+  db.member.findFirst({
+    where: {
+      deletedAt: null,
+      team_users: { some: { user_id: userId, status: MEMBER_USER_STATUS.ACTIVE } },
+    },
+  });
 
 export const findMemberById = (db: Db, id: bigint) =>
   db.member.findFirst({ where: { id, deletedAt: null } });
