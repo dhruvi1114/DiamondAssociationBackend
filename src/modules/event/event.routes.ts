@@ -2,7 +2,11 @@ import { Router } from 'express';
 import { END_POINTS } from '@constant';
 import { authenticate, authenticateAdmin, authorize, validateRequest } from '@middleware';
 import * as controller from '@modules/event/event.controller';
-import { registerAsMemberSchema } from '@modules/event/registration.types';
+import {
+  listRegistrationsSchema,
+  registerAsMemberSchema,
+  rejectRegistrationSchema,
+} from '@modules/event/registration.types';
 import {
   cancelEventSchema,
   createEventSchema,
@@ -63,6 +67,34 @@ eventAdminRouter.delete(
   authorize('event.manage'),
   validateRequest({ params: idParamSchema }),
   controller.deleteEvent,
+);
+
+eventAdminRouter.get(
+  `${END_POINTS.EVENTS}/:id/attendees`,
+  authorize('event.view'),
+  validateRequest({ params: idParamSchema }),
+  controller.listAttendees,
+);
+
+eventAdminRouter.get(
+  '/event-registrations',
+  authorize('event.view'),
+  validateRequest({ query: listRegistrationsSchema }),
+  controller.listRegistrations,
+);
+
+eventAdminRouter.post(
+  '/event-registrations/:id/approve',
+  authorize('event.manage'),
+  validateRequest({ params: idParamSchema }),
+  controller.approveRegistration,
+);
+
+eventAdminRouter.post(
+  '/event-registrations/:id/reject',
+  authorize('event.manage'),
+  validateRequest({ params: idParamSchema, body: rejectRegistrationSchema }),
+  controller.rejectRegistration,
 );
 
 /** `/api/v1/public/events` — the public site. No session. */

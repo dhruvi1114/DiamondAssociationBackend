@@ -9,10 +9,12 @@ import { EVENT_STATUS } from '@modules/event/event.constants';
 import * as eventRepo from '@modules/event/event.repository';
 import { priceBooking } from '@modules/event/registration.pricing';
 import {
+  CANCELLED_BY,
   DEFAULT_GRACE_DAYS,
   DEFAULT_PAYMENT_HOLD_DAYS,
   REGISTRANT_TYPE,
   REGISTRATION_STATUS,
+  SEAT_HOLDING_STATUSES,
 } from '@modules/event/registration.constants';
 import * as seats from '@modules/event/registration.repository';
 import { AppError } from '@utils/appError';
@@ -110,6 +112,65 @@ export const holdDeadline = async (from: Date): Promise<Date> => {
   return new Date(from.getTime() + days * 86_400_000);
 };
 
+/**
+ * The invoice for a booking.
+ *
+ * Shared by the booking transaction and by approval, because an approval-on
+ * event raises its invoice later — at the moment staff say yes — and the two
+ * have to produce an identical bill. One line, quantity = delegates, so the
+ * payer sees what they are paying for rather than a bare total.
+ */
+const raiseEventInvoice = async (
+  tx: Db,
+  input: {
+    memberId: bigint | null;
+    guestRegistrantId: bigint | null;
+    issueDate: Date;
+    dueDate: Date;
+    eventTitle: string;
+    tierName: string;
+    seats: number;
+    unitPrice: Prisma.Decimal;
+    subtotal: Prisma.Decimal;
+    taxRate: Prisma.Decimal;
+    taxAmount: Prisma.Decimal;
+    total: Prisma.Decimal;
+  },
+) =>
+  tx.invoice.create({
+    data: {
+      invoice_number: await allocateInvoiceNumber(tx, input.issueDate),
+      member_id: input.memberId,
+      guest_registrant_id: input.guestRegistrantId,
+      invoice_type: InvoiceType.EVENT,
+      // Issued, not draft: the payer is told to pay it in the same breath as
+      // being told their seats are held.
+      status: InvoiceStatus.ISSUED,
+      issue_date: input.issueDate,
+      // Due the day the hold expires. A later due date would promise time the
+      // seats are not actually going to wait.
+      due_date: input.dueDate,
+      subtotal: input.subtotal,
+      tax_amount: input.taxAmount,
+      total_amount: input.total,
+      amount_paid: new Prisma.Decimal(0),
+      balance_due: input.total,
+      items: {
+        create: [
+          {
+            description: `${input.eventTitle} — ${input.tierName} (${input.seats} delegate${input.seats === 1 ? '' : 's'})`,
+            quantity: new Prisma.Decimal(input.seats),
+            unit_price: input.unitPrice,
+            tax_rate: input.taxRate,
+            tax_amount: input.taxAmount,
+            line_total: input.total,
+            sort_order: 0,
+          },
+        ],
+      },
+    },
+  });
+
 /** A member company books seats for named colleagues. */
 export const registerAsMember = async (
   slug: string,
@@ -179,33 +240,19 @@ export const registerAsMember = async (
       const invoice =
         needsApproval || priced.isFree
           ? null
-          : await tx.invoice.create({
-              data: {
-                invoice_number: await allocateInvoiceNumber(tx, now),
-                member_id: member.id,
-                invoice_type: InvoiceType.EVENT,
-                status: InvoiceStatus.ISSUED,
-                issue_date: now,
-                due_date: expiresAt,
-                subtotal: priced.subtotal,
-                tax_amount: priced.taxAmount,
-                total_amount: priced.total,
-                amount_paid: new Prisma.Decimal(0),
-                balance_due: priced.total,
-                items: {
-                  create: [
-                    {
-                      description: `${event.title} — ${priced.tier.name} (${input.attendees.length} delegate${input.attendees.length === 1 ? '' : 's'})`,
-                      quantity: new Prisma.Decimal(input.attendees.length),
-                      unit_price: priced.unitPrice,
-                      tax_rate: event.tax_rate,
-                      tax_amount: priced.taxAmount,
-                      line_total: priced.total,
-                      sort_order: 0,
-                    },
-                  ],
-                },
-              },
+          : await raiseEventInvoice(tx, {
+              memberId: member.id,
+              guestRegistrantId: null,
+              issueDate: now,
+              dueDate: expiresAt,
+              eventTitle: event.title,
+              tierName: priced.tier.name,
+              seats: input.attendees.length,
+              unitPrice: priced.unitPrice,
+              subtotal: priced.subtotal,
+              taxRate: event.tax_rate,
+              taxAmount: priced.taxAmount,
+              total: priced.total,
             });
 
       const registrationCode = await nextRegistrationCode(tx, now);
@@ -320,4 +367,204 @@ export const __internals = {
   bookingRefusal,
   invalid,
   attendeeCount: (a: AttendeeInput[]) => a.length,
+};
+
+/* --- staff decisions on an event that vets its attendees ------------------- */
+
+export interface AdminActor {
+  adminId: bigint;
+  ip: string | null;
+  userAgent: string | null;
+  requestId: string | null;
+}
+
+const loadPendingApproval = async (id: bigint) => {
+  const registration = await prisma.eventRegistration.findFirst({
+    where: { id, deletedAt: null },
+    include: { event: true },
+  });
+
+  if (!registration) {
+    throw new AppError({
+      errorType: ERROR_TYPES.NOT_FOUND,
+      messageKey: 'event.registrationNotFound',
+    });
+  }
+
+  if (registration.status !== REGISTRATION_STATUS.PENDING_APPROVAL) {
+    throw conflict('event.registrationNotAwaitingApproval');
+  }
+
+  return registration;
+};
+
+/**
+ * Staff say yes.
+ *
+ * The invoice is raised **now**, not at booking, and the hold clock restarts
+ * from this moment. Both matter: if the clock had been running since the request
+ * was made, an admin who took three days to decide would have spent three of the
+ * payer's five, and the member would be chased for money they were never yet
+ * asked for.
+ */
+export const approveRegistration = async (id: bigint, actor: AdminActor, now = new Date()) => {
+  const registration = await loadPendingApproval(id);
+  const expiresAt = await holdDeadline(now);
+  const isFree = registration.total_amount.isZero();
+
+  return prisma.$transaction(async (tx) => {
+    const tier = registration.price_tier_id
+      ? await tx.eventPriceTier.findUnique({ where: { id: registration.price_tier_id } })
+      : null;
+
+    const invoice = isFree
+      ? null
+      : await raiseEventInvoice(tx, {
+          memberId: registration.member_id,
+          guestRegistrantId: registration.guest_registrant_id,
+          issueDate: now,
+          dueDate: expiresAt,
+          eventTitle: registration.event.title,
+          // The tier the booking was priced at, not today's. The price was
+          // frozen when they asked; approving does not re-price it.
+          tierName: tier?.name ?? 'Registration',
+          seats: registration.attendee_count,
+          unitPrice: registration.subtotal.div(registration.attendee_count),
+          subtotal: registration.subtotal,
+          taxRate: registration.event.tax_rate,
+          taxAmount: registration.tax_amount,
+          total: registration.total_amount,
+        });
+
+    const updated = await tx.eventRegistration.update({
+      where: { id },
+      data: {
+        status: isFree ? REGISTRATION_STATUS.CONFIRMED : REGISTRATION_STATUS.PENDING_PAYMENT,
+        invoice_id: invoice?.id ?? null,
+        expires_at: isFree ? null : expiresAt,
+        approved_at: now,
+        approved_by_admin_id: actor.adminId,
+        updated_by_admin_id: actor.adminId,
+      },
+    });
+
+    await writeAudit(tx, {
+      action: AUDIT_ACTIONS.EVENT_REGISTRATION_APPROVED,
+      entityName: 'EventRegistrations',
+      entityId: id,
+      actorType: ACTOR_TYPES.ADMIN,
+      actorId: actor.adminId,
+      before: { status: REGISTRATION_STATUS.PENDING_APPROVAL },
+      after: { status: updated.status, invoice_id: invoice?.id.toString() ?? null },
+      ip: actor.ip,
+      userAgent: actor.userAgent,
+      requestId: actor.requestId,
+    });
+
+    return {
+      id: id.toString(),
+      status: updated.status,
+      invoice_number: invoice?.invoice_number ?? null,
+      expires_at: updated.expires_at,
+    };
+  });
+};
+
+/**
+ * Staff say no.
+ *
+ * The seats go back immediately, and the reason is mandatory — it is what the
+ * applicant is told, and a refusal with no explanation is a phone call to the
+ * office. Nothing financial has to be undone, because on an approval-on event
+ * the invoice never existed.
+ */
+export const rejectRegistration = async (
+  id: bigint,
+  input: { reason: string },
+  actor: AdminActor,
+  now = new Date(),
+) => {
+  const registration = await loadPendingApproval(id);
+
+  return prisma.$transaction(async (tx) => {
+    await seats.releaseSeats(tx, registration.event_id, registration.attendee_count);
+
+    const updated = await tx.eventRegistration.update({
+      where: { id },
+      data: {
+        status: REGISTRATION_STATUS.REJECTED,
+        rejection_reason: input.reason,
+        // Cleared: the row is finished, and a deadline on a finished booking
+        // would put it back in front of the expiry sweep every night.
+        expires_at: null,
+        cancelled_at: now,
+        cancelled_by: CANCELLED_BY.ADMIN,
+        updated_by_admin_id: actor.adminId,
+      },
+    });
+
+    await writeAudit(tx, {
+      action: AUDIT_ACTIONS.EVENT_REGISTRATION_REJECTED,
+      entityName: 'EventRegistrations',
+      entityId: id,
+      actorType: ACTOR_TYPES.ADMIN,
+      actorId: actor.adminId,
+      before: { status: REGISTRATION_STATUS.PENDING_APPROVAL },
+      after: { status: updated.status, reason: input.reason },
+      ip: actor.ip,
+      userAgent: actor.userAgent,
+      requestId: actor.requestId,
+    });
+
+    return { id: id.toString(), status: updated.status };
+  });
+};
+
+/* --- reading the queues ---------------------------------------------------- */
+
+/** Bookings, for the admin screens. `statuses` empty means every status. */
+export const listRegistrations = async (query: {
+  eventId?: bigint;
+  statuses?: number[];
+  page: number;
+  limit: number;
+}) => {
+  const rows = await seats.listRegistrationsAdmin(prisma, query);
+
+  return {
+    rows: rows.map(({ total: _total, ...row }) => ({
+      ...row,
+      id: row.id.toString(),
+      event_id: row.event_id.toString(),
+      total_amount: row.total_amount.toFixed(2),
+    })),
+    total: rows.length > 0 ? Number(rows[0].total) : 0,
+  };
+};
+
+/**
+ * Who is going to attend one event.
+ *
+ * Defaults to the bookings that actually hold a seat. An expired or rejected
+ * booking has no one attending under it, and listing those people would inflate
+ * every catering count taken off this screen.
+ */
+export const listAttendees = async (query: {
+  eventId: bigint;
+  statuses?: number[];
+  page: number;
+  limit: number;
+}) => {
+  const rows = await seats.listAttendees(prisma, {
+    ...query,
+    statuses: query.statuses && query.statuses.length > 0 ? query.statuses : SEAT_HOLDING_STATUSES,
+  });
+
+  return {
+    rows: rows.map(({ total: _total, ...row }) => ({
+      ...row,
+      unit_price: row.unit_price.toFixed(2),
+    })),
+    total: rows.length > 0 ? Number(rows[0].total) : 0,
+  };
 };

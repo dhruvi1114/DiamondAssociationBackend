@@ -235,3 +235,87 @@ export const registerForEvent = handler(async (req, res) => {
     data: serialise(booking),
   });
 });
+
+/* --- staff: bookings and who is going to attend ----------------------------- */
+
+const statusList = (raw: unknown): number[] | undefined =>
+  typeof raw === 'string' && raw.length > 0 ? raw.split(',').map(Number) : undefined;
+
+/** `GET /admin/event-registrations` — the booking list, and the approval queue. */
+export const listRegistrations = handler(async (req, res) => {
+  const page = Number(req.query.page ?? 1);
+  const limit = Math.min(Number(req.query.limit ?? 20), 100);
+
+  const { rows, total } = await registration.listRegistrations({
+    page,
+    limit,
+    eventId: req.query.event_id ? BigInt(req.query.event_id as string) : undefined,
+    statuses: statusList(req.query.status),
+  });
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.GET,
+    data: serialise({ rows }),
+    pagination: { page, limit, total },
+  });
+});
+
+/** `POST /admin/event-registrations/:id/approve`. */
+export const approveRegistration = handler(async (req, res) => {
+  const result = await registration.approveRegistration(BigInt(req.params.id as string), {
+    adminId: actor(req).id,
+    ip: req.ip ?? null,
+    userAgent: req.get('user-agent') ?? null,
+    requestId: req.requestId ?? null,
+  });
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'event.registrationApproved',
+    data: serialise(result),
+  });
+});
+
+/** `POST /admin/event-registrations/:id/reject`. */
+export const rejectRegistration = handler(async (req, res) => {
+  const result = await registration.rejectRegistration(
+    BigInt(req.params.id as string),
+    req.body as never,
+    {
+      adminId: actor(req).id,
+      ip: req.ip ?? null,
+      userAgent: req.get('user-agent') ?? null,
+      requestId: req.requestId ?? null,
+    },
+  );
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'event.registrationRejected',
+    data: serialise(result),
+  });
+});
+
+/**
+ * `GET /admin/events/:id/attendees` — who is going to attend.
+ *
+ * People, not companies. A row reading "ABC Pvt Ltd — 3" cannot be turned into
+ * badges, a catering count or a door list.
+ */
+export const listAttendees = handler(async (req, res) => {
+  const page = Number(req.query.page ?? 1);
+  const limit = Math.min(Number(req.query.limit ?? 100), 500);
+
+  const { rows, total } = await registration.listAttendees({
+    eventId: BigInt(req.params.id as string),
+    page,
+    limit,
+    statuses: statusList(req.query.status),
+  });
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.GET,
+    data: serialise({ rows }),
+    pagination: { page, limit, total },
+  });
+});

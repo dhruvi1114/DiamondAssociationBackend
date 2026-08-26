@@ -62,3 +62,101 @@ export const releaseSeats = async (
 
   return rows[0]?.seats_taken ?? null;
 };
+
+export interface AdminRegistrationRow {
+  id: bigint;
+  registration_code: string;
+  event_id: bigint;
+  event_title: string;
+  registrant_type: number;
+  status: number;
+  attendee_count: number;
+  total_amount: Prisma.Decimal;
+  registered_at: Date;
+  expires_at: Date | null;
+  booked_by: string | null;
+  invoice_number: string | null;
+  total: bigint;
+}
+
+/**
+ * Bookings for the admin screens, filtered by event and status.
+ *
+ * One statement with a windowed count and the payer's name resolved from
+ * whichever side it lives on — the alternative is fetching the page and then
+ * asking per row who booked it, which is the N+1 this codebase avoids (ADR-005).
+ */
+export const listRegistrationsAdmin = (
+  db: Db,
+  query: { eventId?: bigint; statuses?: number[]; page: number; limit: number },
+) => {
+  const offset = (query.page - 1) * query.limit;
+  const statuses = query.statuses && query.statuses.length > 0 ? query.statuses : null;
+
+  return db.$queryRaw<AdminRegistrationRow[]>(Prisma.sql`
+    SELECT r."id", r."registration_code", r."event_id", e."title" AS event_title,
+           r."registrant_type", r."status", r."attendee_count", r."total_amount",
+           r."registered_at", r."expires_at",
+           COALESCE(m."company_name", g."company_name", g."full_name") AS booked_by,
+           i."invoice_number",
+           count(*) OVER () AS total
+      FROM "EventRegistrations" r
+      JOIN "Events" e ON e."id" = r."event_id"
+      LEFT JOIN "Members" m ON m."id" = r."member_id"
+      LEFT JOIN "GuestRegistrants" g ON g."id" = r."guest_registrant_id"
+      LEFT JOIN "Invoices" i ON i."id" = r."invoice_id"
+     WHERE r."deletedAt" IS NULL
+       AND (${query.eventId ?? null}::bigint IS NULL OR r."event_id" = ${query.eventId ?? null})
+       AND (${statuses}::int[] IS NULL OR r."status" = ANY(${statuses}::int[]))
+     ORDER BY r."registered_at" DESC
+     LIMIT ${query.limit} OFFSET ${offset}
+  `);
+};
+
+export interface AttendeeRow {
+  attendee_code: string;
+  full_name: string;
+  designation: string | null;
+  email: string | null;
+  phone: string | null;
+  unit_price: Prisma.Decimal;
+  food_preference: number | null;
+  special_requirement: string | null;
+  registration_code: string;
+  status: number;
+  booked_by: string | null;
+  registrant_type: number;
+  total: bigint;
+}
+
+/**
+ * Who is going to attend — people, not companies.
+ *
+ * This is the list the association actually needs: a booking row saying
+ * "ABC Pvt Ltd — 3" cannot be turned into badges, a catering count or a door
+ * list. Deliberately not an attendance record: nothing here says who turned up.
+ */
+export const listAttendees = (
+  db: Db,
+  query: { eventId: bigint; statuses?: number[]; page: number; limit: number },
+) => {
+  const offset = (query.page - 1) * query.limit;
+  const statuses = query.statuses && query.statuses.length > 0 ? query.statuses : null;
+
+  return db.$queryRaw<AttendeeRow[]>(Prisma.sql`
+    SELECT a."attendee_code", a."full_name", a."designation", a."email", a."phone",
+           a."unit_price", a."food_preference", a."special_requirement",
+           r."registration_code", r."status", r."registrant_type",
+           COALESCE(m."company_name", g."company_name", g."full_name") AS booked_by,
+           count(*) OVER () AS total
+      FROM "EventRegistrationAttendees" a
+      JOIN "EventRegistrations" r ON r."id" = a."registration_id"
+      LEFT JOIN "Members" m ON m."id" = r."member_id"
+      LEFT JOIN "GuestRegistrants" g ON g."id" = r."guest_registrant_id"
+     WHERE r."event_id" = ${query.eventId}
+       AND r."deletedAt" IS NULL
+       AND (${statuses}::int[] IS NULL OR r."status" = ANY(${statuses}::int[]))
+     ORDER BY COALESCE(m."company_name", g."company_name", g."full_name"), a."id"
+     LIMIT ${query.limit} OFFSET ${offset}
+  `);
+};

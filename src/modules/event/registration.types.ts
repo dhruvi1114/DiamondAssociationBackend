@@ -58,3 +58,26 @@ export const registerAsMemberSchema = z.object({
 });
 
 export type RegisterAsMemberInput = z.infer<typeof registerAsMemberSchema>;
+
+/** Body of `POST /admin/event-registrations/:id/reject`. */
+export const rejectRegistrationSchema = z.object({
+  // Mandatory: this is what the applicant is told, and a refusal with no reason
+  // is a phone call to the office.
+  reason: z.string().trim().min(3).max(500),
+});
+
+export type RejectRegistrationInput = z.infer<typeof rejectRegistrationSchema>;
+
+/** Query for the admin booking list. */
+export const listRegistrationsSchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  event_id: z.string().regex(/^\d+$/).optional(),
+  /** Comma-separated status codes; empty means every status. */
+  status: z
+    .string()
+    .regex(/^\d+(,\d+)*$/)
+    .optional(),
+});
+
+export type ListRegistrationsQuery = z.infer<typeof listRegistrationsSchema>;
