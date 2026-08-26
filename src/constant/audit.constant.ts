@@ -205,6 +205,12 @@ export const AUDIT_ACTIONS = {
   RECEIPT_ISSUED: 'receipt.issued',
   /** A membership term was opened. */
   TERM_CREATED: 'membership_term.created',
+
+  // --- M7: company team logins ----------------------------------------------
+  /** An owner invited someone onto the company roster. */
+  MEMBER_TEAM_INVITED: 'member_team.invited',
+  /** An owner switched a team login on or off. */
+  MEMBER_TEAM_STATUS_CHANGED: 'member_team.status_changed',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

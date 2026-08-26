@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, UserStatus } from '@prisma/client';
 import { prisma } from '@db/prisma';
 import type { Db } from '@db/prisma';
 import { MEMBER_USER_STATUS } from '@modules/member/team.constants';
@@ -100,3 +100,46 @@ export const acceptInvitesForUser = (db: Db, userId: bigint, now: Date) =>
     where: { user_id: userId, accepted_at: null, revoked_at: null },
     data: { accepted_at: now },
   });
+
+/**
+ * A login with no password yet.
+ *
+ * `password_hash` stays null until the invitee follows the emailed link, and
+ * `setInitialPassword` refuses to run against a login that already has one — so
+ * an invite link cannot be replayed to overwrite a working password.
+ */
+export const createUser = (db: Db, data: { email: string; full_name: string }) =>
+  db.user.create({
+    data: {
+      email: data.email,
+      full_name: data.full_name,
+      password_hash: null,
+      status: UserStatus.PENDING_VERIFICATION,
+    },
+  });
+
+export const createTeamRow = (
+  db: Db,
+  data: {
+    member_id: bigint;
+    user_id: bigint;
+    member_role: number;
+    status: number;
+    invited_by_user_id: bigint;
+    created_by_user_id: bigint;
+  },
+) => db.memberUser.create({ data });
+
+export const createInvite = (
+  db: Db,
+  data: {
+    member_id: bigint;
+    user_id: bigint;
+    email: string;
+    full_name: string;
+    designation: string | null;
+    invited_by_user_id: bigint;
+    expires_at: Date;
+    created_by_user_id: bigint;
+  },
+) => db.memberTeamInvite.create({ data });

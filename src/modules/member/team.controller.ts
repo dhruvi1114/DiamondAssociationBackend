@@ -8,6 +8,7 @@ import * as teamRepo from '@modules/member/team.repository';
 import * as service from '@modules/member/team.service';
 import { AppError } from '@utils/appError';
 import { handleApiResponse } from '@utils/handleResponse';
+import { contextFromRequest } from '@modules/auth/auth.service';
 
 /**
  * HTTP layer for company team logins.
@@ -73,6 +74,25 @@ export const listTeam = handler(async (req, res) => {
   handleApiResponse(res, {
     responseType: RES_STATUS.GET,
     data: { rows: await service.listTeam(context.memberId) },
+  });
+});
+
+/** `POST /members/me/team` — invite a colleague. Owner only. */
+export const inviteTeamMember = handler(async (req, res) => {
+  const context = await teamContext(req);
+
+  requireOwner(context);
+
+  const row = await service.inviteTeamMember(
+    req.body as never,
+    context,
+    contextFromRequest(req),
+  );
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.CREATE,
+    messageKey: 'member.teamInvited',
+    data: { row },
   });
 });
 
