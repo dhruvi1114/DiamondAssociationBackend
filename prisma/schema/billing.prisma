@@ -20,9 +20,12 @@ model Payment {
   /// orphaned or cascade-deleted.
   invoice_id BigInt
 
-  /// FK to Members.id — who paid. Nullable so a non-member can pay for an event
-  /// later; today every row has one.
+  /// FK to Members.id — who paid, when the payer is a member. Exactly one of
+  /// this and `guest_registrant_id` is set, enforced by a CHECK.
   member_id BigInt?
+
+  /// FK to GuestRegistrants.id — who paid, when the payer is not a member.
+  guest_registrant_id BigInt?
 
   /// Amount received, INR, 2dp. CHECK amount > 0 — a zero payment is not an event.
   amount Decimal @db.Decimal(14, 2)
@@ -81,6 +84,9 @@ model Payment {
 
   /// The paying member.
   member Member? @relation(fields: [member_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  /// The paying guest.
+  guest_registrant GuestRegistrant? @relation(fields: [guest_registrant_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
   /// The document issued for this payment.
   receipt Receipt?

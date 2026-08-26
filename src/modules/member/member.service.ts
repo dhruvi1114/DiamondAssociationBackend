@@ -870,6 +870,68 @@ const formatMemberAddress = (
 };
 
 /**
+ * The party a bill is addressed to.
+ *
+ * Since events, an invoice belongs to a member **or** to a guest — never both,
+ * never neither, enforced by a CHECK. The PDF needs one bill-to block either
+ * way, so the two shapes are resolved here rather than at every render site.
+ *
+ * A guest's address lives on their own row; a member's is one of several, so the
+ * registered one is preferred. A guest with no company name is billed under
+ * their own name, which is what a sole trader expects to see.
+ */
+const billedParty = (invoice: {
+  member: {
+    company_name: string;
+    legal_name: string | null;
+    gst_number: string | null;
+    addresses: Parameters<typeof formatMemberAddress>[0];
+  } | null;
+  guest_registrant: {
+    full_name: string;
+    company_name: string | null;
+    gst_number: string | null;
+    line1: string | null;
+    line2: string | null;
+    city: string | null;
+    state: string | null;
+    country: string;
+    pincode: string | null;
+  } | null;
+}): {
+  company_name: string;
+  legal_name: string | null;
+  gst_number: string | null;
+  address: string | null;
+} => {
+  if (invoice.member) {
+    return {
+      company_name: invoice.member.company_name,
+      legal_name: invoice.member.legal_name,
+      gst_number: invoice.member.gst_number,
+      address: formatMemberAddress(invoice.member.addresses),
+    };
+  }
+
+  const guest = invoice.guest_registrant;
+
+  // Neither is a broken row the CHECK should have refused. Throwing beats
+  // rendering an invoice addressed to nobody.
+  if (!guest) throw notFound('member.invoiceNotFound');
+
+  const address = [guest.line1, guest.line2, guest.city, guest.state, guest.country, guest.pincode]
+    .filter((part): part is string => Boolean(part && part.trim()))
+    .join(', ');
+
+  return {
+    company_name: guest.company_name ?? guest.full_name,
+    legal_name: guest.company_name ? guest.full_name : null,
+    gst_number: guest.gst_number,
+    address: address || null,
+  };
+};
+
+/**
  * Generates the invoice PDF on first request and caches it in storage — an
  * ISSUED invoice's line items never change (`billing-payment.md` §2: "only
  * DRAFT invoices are editable"), so the rendered PDF is stable too.
@@ -883,6 +945,7 @@ export const getInvoicePdf = async (
     include: {
       items: { orderBy: { sort_order: 'asc' } },
       member: { include: { addresses: { where: { deletedAt: null } } } },
+      guest_registrant: true,
     },
   });
   if (!invoice) throw notFound('member.invoiceNotFound');
@@ -902,12 +965,7 @@ export const getInvoicePdf = async (
   const buffer = await renderInvoicePdf({
     org,
     logo,
-    member: {
-      company_name: invoice.member.company_name,
-      legal_name: invoice.member.legal_name,
-      gst_number: invoice.member.gst_number,
-      address: formatMemberAddress(invoice.member.addresses),
-    },
+    member: billedParty(invoice),
     invoice: {
       invoice_number: invoice.invoice_number,
       issue_date: invoice.issue_date,
@@ -948,6 +1006,7 @@ export const getReceiptPdf = async (
       invoice: {
         include: {
           member: { include: { addresses: { where: { deletedAt: null } } } },
+          guest_registrant: true,
           items: { orderBy: { sort_order: 'asc' } },
         },
       },
@@ -970,12 +1029,7 @@ export const getReceiptPdf = async (
   const buffer = await renderReceiptPdf({
     org,
     logo,
-    member: {
-      company_name: receipt.invoice.member.company_name,
-      legal_name: receipt.invoice.member.legal_name,
-      gst_number: receipt.invoice.member.gst_number,
-      address: formatMemberAddress(receipt.invoice.member.addresses),
-    },
+    member: billedParty(receipt.invoice),
     invoice: {
       invoice_number: receipt.invoice.invoice_number,
       issue_date: receipt.invoice.issue_date,

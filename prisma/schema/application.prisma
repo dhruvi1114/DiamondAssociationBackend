@@ -647,9 +647,13 @@ model Invoice {
   /// restarting each quarter, e.g. IN202603001 (client decision, 2026-08-13).
   invoice_number String @unique @db.VarChar(30)
 
-  /// FK to Members.id — who is billed. ON DELETE RESTRICT: financial records are
-  /// never orphaned.
-  member_id BigInt
+  /// FK to Members.id — who is billed, when the payer is a member. Nullable
+  /// because a non-member may be billed for an event; exactly one of this and
+  /// `guest_registrant_id` is set, enforced by a CHECK.
+  member_id BigInt?
+
+  /// FK to GuestRegistrants.id — who is billed, when the payer is not a member.
+  guest_registrant_id BigInt?
 
   /// What this invoice is for.
   invoice_type InvoiceType @default(MEMBERSHIP)
@@ -701,9 +705,11 @@ model Invoice {
 
   /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
   deletedAt DateTime? @db.Timestamptz(6)
+  /// Who is billed, when the payer is a member.
+  member    Member?   @relation(fields: [member_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
-  /// The company billed.
-  member Member @relation(fields: [member_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  /// The guest being billed, when the payer is not a member.
+  guest_registrant GuestRegistrant? @relation(fields: [guest_registrant_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
   /// Who raised it.
   created_by AdminUser? @relation("InvoiceCreator", fields: [created_by_admin_id], references: [id], onDelete: SetNull, onUpdate: Cascade)

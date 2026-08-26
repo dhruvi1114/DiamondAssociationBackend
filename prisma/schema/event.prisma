@@ -177,3 +177,82 @@ model EventPriceTier {
   @@index([event_id, starts_on])
   @@map("EventPriceTiers")
 }
+
+/// A non-member who registered for a public event.
+///
+/// Not a login: no password, no `Users` row, no session. A guest is the customer
+/// of one event, and giving them an account would make them a platform user with
+/// data scoping, roles and a lifecycle nobody asked for.
+///
+/// Everything here is typed by the guest themselves, because the platform holds
+/// nothing about them to pre-fill.
+model GuestRegistrant {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// The person attending and being billed.
+  full_name String @db.VarChar(150)
+
+  /// Job title, for the badge and the attendee list.
+  designation String? @db.VarChar(100)
+
+  /// Their firm's name, as it should appear on the invoice.
+  company_name String? @db.VarChar(200)
+
+  /// Where the confirmation and the ticket code are sent.
+  email String @db.Citext
+
+  /// Day-of contact number.
+  phone String? @db.VarChar(20)
+
+  /// GSTIN, so the invoice can carry it. Optional: not every guest has one.
+  gst_number String? @db.VarChar(20)
+
+  /// PAN, for TDS cases.
+  pan_number String? @db.VarChar(10)
+
+  /// Billing address, line 1.
+  line1 String? @db.VarChar(200)
+
+  /// Billing address, line 2.
+  line2 String? @db.VarChar(200)
+
+  /// City.
+  city String? @db.VarChar(100)
+
+  /// State.
+  state String? @db.VarChar(100)
+
+  /// Postal code.
+  pincode String? @db.VarChar(10)
+
+  /// Country.
+  country String @default("India") @db.VarChar(100)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Member login that created this row. Always NULL: guests have no login.
+  created_by_user_id BigInt?
+
+  /// Staff account that created this row, when staff registered someone by hand.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Member login that last changed this row.
+  updated_by_user_id BigInt?
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// Invoices raised against this guest.
+  invoices Invoice[]
+
+  /// Payments this guest has made.
+  payments Payment[]
+
+  @@index([email])
+  @@map("GuestRegistrants")
+}
