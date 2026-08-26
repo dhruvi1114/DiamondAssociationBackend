@@ -40,13 +40,6 @@ export const PERMISSION_CATALOGUE: { code: string; description: string }[] = [
   { code: 'fee.view', description: 'View fee structures.' },
   { code: 'fee.manage', description: 'Create and edit fee structures.' },
 
-  { code: 'event.view', description: 'View events, their price tiers and registrations.' },
-  { code: 'event.manage', description: 'Create and edit events and their price tiers.' },
-  {
-    code: 'event.publish',
-    description: 'Publish an event to its audience, or cancel a published one.',
-  },
-
   { code: 'invoice.view', description: 'View invoices.' },
   { code: 'invoice.manage', description: 'Issue, edit and cancel invoices.' },
 

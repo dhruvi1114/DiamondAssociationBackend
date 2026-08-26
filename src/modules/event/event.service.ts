@@ -274,6 +274,39 @@ export const cancelEvent = async (id: bigint, input: { reason: string }, actor: 
   });
 };
 
+/**
+ * Remove an event.
+ *
+ * Soft-delete, and only while nobody holds a seat. Once seats are held the event
+ * has an audience: the honest action is to cancel it — which forces a decision
+ * about refunds and tells everyone — not to make it disappear from the admin's
+ * own list while the people who booked still expect to attend.
+ */
+export const deleteEvent = async (id: bigint, actor: EventActor) => {
+  const event = await repo.findEventById(prisma, id);
+
+  if (!event) throw notFound();
+  if (event.seats_taken > 0) throw conflict('event.hasRegistrations');
+
+  return prisma.$transaction(async (tx) => {
+    await repo.updateEvent(tx, id, { deletedAt: new Date(), updated_by_admin_id: actor.id });
+
+    await writeAudit(tx, {
+      action: AUDIT_ACTIONS.EVENT_DELETED,
+      entityName: 'Events',
+      entityId: id,
+      actorType: ACTOR_TYPES.ADMIN,
+      actorId: actor.id,
+      before: { title: event.title, status: event.status },
+      ip: actor.ip,
+      userAgent: actor.userAgent,
+      requestId: actor.requestId,
+    });
+
+    return { id: id.toString() };
+  });
+};
+
 /* --- browsing: public and member ------------------------------------------ */
 
 /** How many seats are still sellable, or null when the event is uncapped. */

@@ -125,6 +125,17 @@ export const cancelEvent = handler(async (req, res) => {
   });
 });
 
+/** `DELETE /admin/events/:id` — remove an event nobody has booked. */
+export const deleteEvent = handler(async (req, res) => {
+  const result = await service.deleteEvent(BigInt(req.params.id as string), actor(req));
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.DELETE,
+    messageKey: 'event.deleted',
+    data: serialise(result),
+  });
+});
+
 /* --- browsing -------------------------------------------------------------- */
 
 const pageQuery = (req: Request) => ({

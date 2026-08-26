@@ -45,16 +45,23 @@ eventAdminRouter.patch(
 
 eventAdminRouter.post(
   `${END_POINTS.EVENTS}/:id/publish`,
-  authorize('event.publish'),
+  authorize('event.manage'),
   validateRequest({ params: idParamSchema }),
   controller.publishEvent,
 );
 
 eventAdminRouter.post(
   `${END_POINTS.EVENTS}/:id/cancel`,
-  authorize('event.publish'),
+  authorize('event.manage'),
   validateRequest({ params: idParamSchema, body: cancelEventSchema }),
   controller.cancelEvent,
+);
+
+eventAdminRouter.delete(
+  `${END_POINTS.EVENTS}/:id`,
+  authorize('event.manage'),
+  validateRequest({ params: idParamSchema }),
+  controller.deleteEvent,
 );
 
 /** `/api/v1/public/events` — the public site. No session. */

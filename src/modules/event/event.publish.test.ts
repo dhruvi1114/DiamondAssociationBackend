@@ -23,7 +23,7 @@ vi.mock('@modules/event/event.repository', () => ({
 
 vi.mock('@helpers/audit', () => ({ writeAudit: (...a: unknown[]) => writeAudit(...a) }));
 
-const { publishEvent, cancelEvent } = await import('@modules/event/event.service');
+const { publishEvent, cancelEvent, deleteEvent } = await import('@modules/event/event.service');
 
 const actor = { id: 1n, ip: null, userAgent: null, requestId: null };
 
@@ -112,5 +112,27 @@ describe('cancelEvent', () => {
     await expect(cancelEvent(5n, { reason: 'x' }, actor)).rejects.toMatchObject({
       messageKey: 'event.cancelledCannotEdit',
     });
+  });
+});
+
+describe('deleteEvent', () => {
+  it('removes an event nobody has booked', async () => {
+    findEventById.mockResolvedValue({ ...draft, status: 1 });
+    updateEvent.mockResolvedValue({ id: 5n });
+
+    const result = await deleteEvent(5n, actor);
+
+    expect(updateEvent.mock.calls[0][2].deletedAt).toBeInstanceOf(Date);
+    expect(result).toMatchObject({ id: '5' });
+  });
+
+  it('refuses while seats are held — cancelling is the honest action, not vanishing', async () => {
+    findEventById.mockResolvedValue({ ...draft, status: 1, seats_taken: 2 });
+
+    await expect(deleteEvent(5n, actor)).rejects.toMatchObject({
+      messageKey: 'event.hasRegistrations',
+    });
+
+    expect(updateEvent).not.toHaveBeenCalled();
   });
 });

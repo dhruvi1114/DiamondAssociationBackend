@@ -221,6 +221,8 @@ export const AUDIT_ACTIONS = {
   EVENT_PUBLISHED: 'event.published',
   /** An event was called off. */
   EVENT_CANCELLED: 'event.cancelled',
+  /** An event with no registrations was removed. */
+  EVENT_DELETED: 'event.deleted',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

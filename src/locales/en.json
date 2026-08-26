@@ -189,7 +189,8 @@
     "cancelledCannotEdit": "A cancelled event cannot be edited",
     "alreadyPublished": "This event is already published",
     "noPriceTier": "Add at least one price tier before publishing",
-    "hasRegistrations": "This event has registrations and cannot be cancelled here yet"
+    "hasRegistrations": "This event has registrations and cannot be cancelled here yet",
+    "deleted": "Event removed"
   },
   "communication": {
     "noticeNotFound": "Notice not found",
