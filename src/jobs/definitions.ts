@@ -1,7 +1,7 @@
 import { JobRunStatus, NotificationStatus, Prisma } from '@prisma/client';
 import { prisma } from '@db/prisma';
 import { logger } from '@logger/logger';
-import { releaseExpiredHolds, remindersDue } from '@modules/event/expiry.service';
+import { releaseExpiredHolds, sendDueReminders } from '@modules/event/expiry.service';
 import { drainNotifications } from '@notifications/drain';
 import type { JobDefinition } from '@jobs/runner';
 
@@ -121,16 +121,13 @@ export const eventHoldSweepJob: JobDefinition = {
     'Releases event seats held by unpaid bookings past their deadline, and flags bookings due a payment reminder.',
   handler: async () => {
     const released = await releaseExpiredHolds();
-    const reminders = await remindersDue();
+    const reminded = await sendDueReminders();
 
-    if (reminders.length > 0) {
-      logger.info('event.remindersDue', {
-        count: reminders.length,
-        codes: reminders.map((row) => row.registration_code),
-      });
+    if (released > 0 || reminded > 0) {
+      logger.info('event.holdSweep', { released, reminded });
     }
 
-    return released + reminders.length;
+    return released + reminded;
   },
 };
 

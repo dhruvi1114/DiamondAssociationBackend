@@ -1,4 +1,7 @@
 import { InvoiceStatus, InvoiceType, Prisma } from '@prisma/client';
+import { logger } from '@logger/logger';
+import { nextRefundNumber } from '@modules/billing/numbering';
+import { PAYMENT_STATUS, REFUND_STATUS } from '@modules/billing/payment.constants';
 import { ACTOR_TYPES, AUDIT_ACTIONS } from '@constant/audit.constant';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { prisma } from '@db/prisma';
@@ -17,7 +20,8 @@ import {
   SEAT_HOLDING_STATUSES,
 } from '@modules/event/registration.constants';
 import * as seats from '@modules/event/registration.repository';
-import { touchedByAdmin } from '@modules/event/actorColumns';
+import { touchedByAdmin, touchedByMember } from '@modules/event/actorColumns';
+import * as notify from '@modules/event/notify';
 import { bookingLinkFor, issueEventAccessToken } from '@modules/event/registration.tokens';
 import { AppError } from '@utils/appError';
 import type { Db } from '@db/prisma';
@@ -303,12 +307,13 @@ export const registerAsMember = async (
 
       // One row per person, each with its own code and the price frozen onto it.
       // The code is what goes in that person's confirmation email.
+      const attendeeRows: { full_name: string; email: string | null; attendee_code: string }[] = [];
       let index = 0;
 
       for (const attendee of input.attendees) {
         index += 1;
 
-        await tx.eventRegistrationAttendee.create({
+        const person = await tx.eventRegistrationAttendee.create({
           data: {
             registration_id: registration.id,
             member_user_id: attendee.member_user_id ? BigInt(attendee.member_user_id) : null,
@@ -326,6 +331,42 @@ export const registerAsMember = async (
             special_requirement: attendee.special_requirement ?? null,
             created_by_user_id: actor.userId,
           },
+        });
+
+        attendeeRows.push({
+          full_name: person.full_name,
+          email: person.email,
+          attendee_code: person.attendee_code,
+        });
+      }
+
+      /*
+        Queued inside this transaction (ADR-010). A confirmation for a booking
+        that then rolled back is worse than none: the reader turns up to an event
+        they are not registered for.
+      */
+      const notice = {
+        userId: actor.userId,
+        memberId: member.id,
+        toAddress: input.contact_email ?? null,
+        eventTitle: event.title,
+        eventDate: event.start_at,
+        registrationCode,
+        seatCount: input.attendees.length,
+      };
+
+      if (needsApproval) {
+        await notify.notifyAwaitingApproval(tx, notice);
+      } else if (priced.isFree) {
+        await notify.notifyConfirmed(tx, notice, {
+          venue: [event.venue_name, event.city].filter(Boolean).join(', '),
+          attendees: attendeeRows,
+        });
+      } else if (invoice) {
+        await notify.notifyPendingPayment(tx, notice, {
+          invoice_number: invoice.invoice_number,
+          total_amount: priced.total.toFixed(2),
+          expires_on: expiresAt,
         });
       }
 
@@ -383,6 +424,30 @@ export interface AdminActor {
   userAgent: string | null;
   requestId: string | null;
 }
+
+/**
+ * The notice fields for a booking already loaded from the database.
+ *
+ * The booker's address is on the booking rather than looked up: for a guest
+ * there is no account to look it up from, and for a member the address they
+ * gave at booking is the one they expect to hear on.
+ */
+const noticeFor = (registration: {
+  member_id: bigint | null;
+  user_id: bigint | null;
+  contact_email: string | null;
+  registration_code: string;
+  attendee_count: number;
+  event: { title: string; start_at: Date };
+}): notify.BookingNotice => ({
+  userId: registration.user_id,
+  memberId: registration.member_id,
+  toAddress: registration.contact_email,
+  eventTitle: registration.event.title,
+  eventDate: registration.event.start_at,
+  registrationCode: registration.registration_code,
+  seatCount: registration.attendee_count,
+});
 
 const loadPendingApproval = async (id: bigint) => {
   const registration = await prisma.eventRegistration.findFirst({
@@ -454,6 +519,14 @@ export const approveRegistration = async (id: bigint, actor: AdminActor, now = n
       },
     });
 
+    if (invoice) {
+      await notify.notifyApproved(tx, noticeFor(registration), {
+        invoice_number: invoice.invoice_number,
+        total_amount: registration.total_amount.toFixed(2),
+        expires_on: expiresAt,
+      });
+    }
+
     await writeAudit(tx, {
       action: AUDIT_ACTIONS.EVENT_REGISTRATION_APPROVED,
       entityName: 'EventRegistrations',
@@ -508,6 +581,8 @@ export const rejectRegistration = async (
         ...touchedByAdmin(actor.adminId),
       },
     });
+
+    await notify.notifyRejected(tx, noticeFor(registration), input.reason);
 
     await writeAudit(tx, {
       action: AUDIT_ACTIONS.EVENT_REGISTRATION_REJECTED,
@@ -726,6 +801,38 @@ export const registerAsGuest = async (
     // link is never emailed for a booking that then rolled back.
     const token = await issueEventAccessToken(tx, registration.id, now);
 
+    const notice: notify.BookingNotice = {
+      // A guest has no login, so the message hangs off the address alone.
+      userId: null,
+      memberId: null,
+      toAddress: input.email,
+      eventTitle: event.title,
+      eventDate: event.start_at,
+      registrationCode,
+      seatCount: 1,
+    };
+
+    if (needsApproval) {
+      await notify.notifyAwaitingApproval(tx, notice);
+    } else if (priced.isFree) {
+      await notify.notifyConfirmed(tx, notice, {
+        venue: [event.venue_name, event.city].filter(Boolean).join(', '),
+        attendees: [
+          {
+            full_name: input.full_name,
+            email: input.email,
+            attendee_code: `${registrationCode}-01`,
+          },
+        ],
+      });
+    } else if (invoice) {
+      await notify.notifyPendingPayment(tx, notice, {
+        invoice_number: invoice.invoice_number,
+        total_amount: priced.total.toFixed(2),
+        expires_on: expiresAt,
+      });
+    }
+
     await writeAudit(tx, {
       action: AUDIT_ACTIONS.EVENT_REGISTERED,
       entityName: 'EventRegistrations',
@@ -830,4 +937,283 @@ export const exportAttendees = async (query: { eventId: bigint; statuses?: numbe
   }
 
   return rows;
+};
+
+/**
+ * A member company's own bookings.
+ *
+ * Scoped to the company, never to the login: a colleague who books on Monday and
+ * a colleague who pays on Tuesday are looking at the same list, and scoping by
+ * user would hide the booking from the person holding the cheque book.
+ *
+ * Ordered newest first — the opposite of the admin queue, because this is a
+ * record rather than a work list, and the thing you just did is the thing you
+ * came to look at.
+ */
+export const listMyBookings = async (memberId: bigint) => {
+  const bookings = await prisma.eventRegistration.findMany({
+    where: { member_id: memberId, deletedAt: null },
+    orderBy: { registered_at: 'desc' },
+    include: {
+      event: {
+        select: { title: true, slug: true, start_at: true, venue_name: true, city: true },
+      },
+      attendees: {
+        orderBy: { id: 'asc' },
+        select: { attendee_code: true, full_name: true, designation: true, unit_price: true },
+      },
+      invoice: {
+        select: { invoice_number: true, status: true, total_amount: true, due_date: true },
+      },
+    },
+  });
+
+  return bookings.map((booking) => ({
+    id: booking.id.toString(),
+    registration_code: booking.registration_code,
+    status: booking.status,
+    event: booking.event,
+    seats: booking.attendee_count,
+    total_amount: booking.total_amount.toFixed(2),
+    expires_at: booking.expires_at,
+    rejection_reason: booking.rejection_reason,
+    invoice: booking.invoice
+      ? {
+          invoice_number: booking.invoice.invoice_number,
+          status: booking.invoice.status,
+          total_amount: booking.invoice.total_amount.toFixed(2),
+          due_date: booking.invoice.due_date,
+        }
+      : null,
+    attendees: booking.attendees.map((person) => ({
+      attendee_code: person.attendee_code,
+      full_name: person.full_name,
+      designation: person.designation,
+      unit_price: person.unit_price.toFixed(2),
+    })),
+  }));
+};
+
+/* --- calling an event off, and putting the money back ---------------------- */
+
+/**
+ * Cancel every booking on an event, refunding what was paid.
+ *
+ * Run one booking at a time, each in its own transaction. A refund that fails —
+ * a constraint, a deadlock — must not abandon the rest: the alternative is an
+ * event half-cancelled, where some attendees have been told and others are still
+ * expecting to come.
+ *
+ * Two outcomes, and the difference is what the reader is told:
+ *  - paid → a Refund row is raised and the money is on its way back;
+ *  - unpaid → the booking and its invoice are cancelled, and nothing was ever
+ *    taken. Told only "cancelled", an unpaid booker rings to ask about an
+ *    invoice they never paid.
+ *
+ * The seats are not released. The event itself is being called off, so there is
+ * nothing left to sell them for, and zeroing the counter would erase the record
+ * of how full it had been.
+ */
+export const cancelEventWithRefunds = async (
+  eventId: bigint,
+  input: { reason: string },
+  actor: AdminActor,
+  now = new Date(),
+): Promise<{ cancelled: number; refunded: number; failed: number }> => {
+  const affected = await prisma.eventRegistration.findMany({
+    where: {
+      event_id: eventId,
+      deletedAt: null,
+      status: { in: SEAT_HOLDING_STATUSES },
+    },
+    include: {
+      event: { select: { title: true, start_at: true } },
+      invoice: { select: { id: true, invoice_number: true, status: true, total_amount: true } },
+    },
+  });
+
+  let cancelled = 0;
+  let refunded = 0;
+  let failed = 0;
+
+  for (const booking of affected) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        const wasPaid = booking.invoice?.status === InvoiceStatus.PAID;
+
+        if (wasPaid && booking.invoice) {
+          // The refund attaches to the payment, not to the invoice: money went
+          // out through a payment and that is what is being reversed.
+          const payment = await tx.payment.findFirst({
+            where: { invoice_id: booking.invoice.id, status: PAYMENT_STATUS.SUCCESS },
+            orderBy: { id: 'desc' },
+          });
+
+          if (payment) {
+            const refund = await tx.refund.create({
+              data: {
+                refund_number: await nextRefundNumber(tx, now),
+                payment_id: payment.id,
+                amount: booking.invoice.total_amount,
+                reason: `Event cancelled: ${input.reason}`,
+                status: REFUND_STATUS.REQUESTED,
+                requested_by_admin_id: actor.adminId,
+                created_by_admin_id: actor.adminId,
+              },
+            });
+
+            await tx.payment.update({
+              where: { id: payment.id },
+              data: { status: PAYMENT_STATUS.REFUNDED, ...touchedByAdmin(actor.adminId) },
+            });
+
+            await notify.notifyEventCancelledWithRefund(tx, noticeFor(booking), {
+              reason: input.reason,
+              total_amount: booking.total_amount.toFixed(2),
+              refund_number: refund.refund_number,
+            });
+
+            refunded += 1;
+          }
+        } else {
+          if (booking.invoice) {
+            await tx.invoice.updateMany({
+              where: {
+                id: booking.invoice.id,
+                status: { in: [InvoiceStatus.ISSUED, InvoiceStatus.OVERDUE] },
+              },
+              data: { status: InvoiceStatus.CANCELLED },
+            });
+          }
+
+          await notify.notifyEventCancelledUnpaid(tx, noticeFor(booking), input.reason);
+        }
+
+        await tx.eventRegistration.update({
+          where: { id: booking.id },
+          data: {
+            status: wasPaid ? REGISTRATION_STATUS.REFUNDED : REGISTRATION_STATUS.CANCELLED,
+            expires_at: null,
+            cancelled_at: now,
+            cancelled_by: CANCELLED_BY.ADMIN,
+            ...touchedByAdmin(actor.adminId),
+          },
+        });
+
+        await writeAudit(tx, {
+          action: AUDIT_ACTIONS.EVENT_REGISTRATION_CANCELLED,
+          entityName: 'EventRegistrations',
+          entityId: booking.id,
+          actorType: ACTOR_TYPES.ADMIN,
+          actorId: actor.adminId,
+          before: { status: booking.status },
+          after: {
+            status: wasPaid ? REGISTRATION_STATUS.REFUNDED : REGISTRATION_STATUS.CANCELLED,
+            reason: input.reason,
+          },
+          ip: actor.ip,
+          userAgent: actor.userAgent,
+          requestId: actor.requestId,
+        });
+      });
+
+      cancelled += 1;
+    } catch (error) {
+      failed += 1;
+
+      logger.error('event.cancelRefundFailed', {
+        registrationCode: booking.registration_code,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { cancelled, refunded, failed };
+};
+
+/**
+ * A member calls off their own booking.
+ *
+ * The seats go back either way. What differs is the money, and the association's
+ * rule is blunt: cancelling before paying costs nothing, cancelling after paying
+ * returns nothing. The screen must have said so before the click; this only
+ * carries it out and repeats it in the email, so the record and the message
+ * agree.
+ *
+ * Scoped to the caller's own company. A booking belonging to another firm reads
+ * as not found rather than forbidden — a 403 would confirm it exists.
+ */
+export const cancelOwnBooking = async (id: bigint, actor: BookingActor, now = new Date()) => {
+  const booking = await prisma.eventRegistration.findFirst({
+    where: { id, member_id: actor.memberId, deletedAt: null },
+    include: {
+      event: { select: { title: true, start_at: true } },
+      invoice: { select: { id: true, status: true } },
+    },
+  });
+
+  if (!booking) {
+    throw new AppError({
+      errorType: ERROR_TYPES.NOT_FOUND,
+      messageKey: 'event.registrationNotFound',
+    });
+  }
+
+  // Only a booking that still holds seats can be called off. Anything else is
+  // already finished, and "cancel" on a finished booking has no meaning.
+  if (!SEAT_HOLDING_STATUSES.includes(booking.status)) {
+    throw conflict('event.cannotCancelBooking');
+  }
+
+  const wasPaid = booking.invoice?.status === InvoiceStatus.PAID;
+
+  return prisma.$transaction(async (tx) => {
+    await seats.releaseSeats(tx, booking.event_id, booking.attendee_count);
+
+    // An unpaid invoice goes with the booking. Left ISSUED it would sit in the
+    // member's account looking payable for seats that no longer exist.
+    if (booking.invoice && !wasPaid) {
+      await tx.invoice.updateMany({
+        where: {
+          id: booking.invoice.id,
+          status: { in: [InvoiceStatus.ISSUED, InvoiceStatus.OVERDUE] },
+        },
+        data: { status: InvoiceStatus.CANCELLED },
+      });
+    }
+
+    await tx.eventRegistration.update({
+      where: { id },
+      data: {
+        status: REGISTRATION_STATUS.CANCELLED,
+        expires_at: null,
+        cancelled_at: now,
+        cancelled_by: CANCELLED_BY.MEMBER,
+        ...touchedByMember(actor.userId),
+      },
+    });
+
+    await notify.notifyBookingCancelledByMember(
+      tx,
+      noticeFor(booking),
+      wasPaid
+        ? 'As set out when you booked, the fee is not refundable once paid.'
+        : 'Nothing was taken and nothing is owed — the invoice has been cancelled.',
+    );
+
+    await writeAudit(tx, {
+      action: AUDIT_ACTIONS.EVENT_REGISTRATION_CANCELLED,
+      entityName: 'EventRegistrations',
+      entityId: id,
+      actorType: ACTOR_TYPES.MEMBER,
+      actorId: actor.userId,
+      before: { status: booking.status },
+      after: { status: REGISTRATION_STATUS.CANCELLED, was_paid: wasPaid },
+      ip: actor.ip,
+      userAgent: actor.userAgent,
+      requestId: actor.requestId,
+    });
+
+    return { id: id.toString(), status: REGISTRATION_STATUS.CANCELLED, refunded: false };
+  });
 };

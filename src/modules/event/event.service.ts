@@ -5,8 +5,11 @@ import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { prisma } from '@db/prisma';
 import { writeAudit } from '@helpers/audit';
 import { EVENT_STATUS } from '@modules/event/event.constants';
-import { resolveTier } from '@modules/event/event.pricing';
+import { getNumericSetting, SETTING_KEYS } from '@helpers/settings';
+import { audienceFor, resolveTier } from '@modules/event/event.pricing';
+import { DEFAULT_GRACE_DAYS } from '@modules/event/registration.constants';
 import * as repo from '@modules/event/event.repository';
+import { cancelEventWithRefunds } from '@modules/event/registration.service';
 import { touchedByAdmin } from '@modules/event/actorColumns';
 import { AppError } from '@utils/appError';
 import type {
@@ -250,7 +253,37 @@ export const cancelEvent = async (id: bigint, input: { reason: string }, actor: 
 
   if (!event) throw notFound();
   if (event.status === EVENT_STATUS.CANCELLED) throw conflict('event.cancelledCannotEdit');
-  if (event.seats_taken > 0) throw conflict('event.hasRegistrations');
+
+  /*
+    Everyone holding a seat is cancelled and refunded first, then the event is
+    marked off. That order matters: if the event were marked cancelled first and
+    a refund then failed, the screen would say "called off" while somebody was
+    still owed their money and had not been told.
+
+    Deliberately outside the event's own transaction. Each booking commits on its
+    own, so one failure leaves the rest correctly refunded rather than rolling
+    back the whole night's work — and the count of failures comes back to the
+    caller rather than being swallowed.
+  */
+  const outcome =
+    event.seats_taken > 0
+      ? await cancelEventWithRefunds(
+          id,
+          { reason: input.reason },
+          {
+            adminId: actor.id,
+            ip: actor.ip,
+            userAgent: actor.userAgent,
+            requestId: actor.requestId,
+          },
+        )
+      : { cancelled: 0, refunded: 0, failed: 0 };
+
+  if (outcome.failed > 0) {
+    // The event stays live. Half-cancelled is the one state nobody can act on:
+    // some attendees told, some not, and no way to tell which from the screen.
+    throw conflict('event.cancelPartiallyFailed');
+  }
 
   return prisma.$transaction(async (tx) => {
     const updated = await repo.updateEvent(tx, id, {
@@ -265,13 +298,23 @@ export const cancelEvent = async (id: bigint, input: { reason: string }, actor: 
       actorType: ACTOR_TYPES.ADMIN,
       actorId: actor.id,
       before: { status: event.status },
-      after: { status: EVENT_STATUS.CANCELLED, reason: input.reason },
+      after: {
+        status: EVENT_STATUS.CANCELLED,
+        reason: input.reason,
+        bookings_cancelled: outcome.cancelled,
+        refunds_raised: outcome.refunded,
+      },
       ip: actor.ip,
       userAgent: actor.userAgent,
       requestId: actor.requestId,
     });
 
-    return { id: updated.id.toString(), status: updated.status };
+    return {
+      id: updated.id.toString(),
+      status: updated.status,
+      bookings_cancelled: outcome.cancelled,
+      refunds_raised: outcome.refunded,
+    };
   });
 };
 
@@ -441,9 +484,46 @@ export const getPublicEvent = async (slug: string, now = new Date()) => {
   return event ? eventDetail(event, now) : null;
 };
 
-/** One published event by slug for a signed-in member, either visibility. */
-export const getMemberEvent = async (slug: string, now = new Date()) => {
+/**
+ * One published event by slug for a signed-in member, either visibility.
+ *
+ * Carries `your_price` — what *this* viewer would actually be charged — beside
+ * the two published prices. Without it the page advertises "Members ₹1,000" to
+ * a signed-in applicant whose membership is not active, who is then billed
+ * ₹2,000 at the point of booking. The rule is right; showing them the other
+ * number is what was wrong.
+ */
+export const getMemberEvent = async (slug: string, userId?: bigint, now = new Date()) => {
   const event = await repo.findMemberEventBySlug(prisma, slug);
 
-  return event ? eventDetail(event, now) : null;
+  if (!event) return null;
+
+  const detail = eventDetail(event, now);
+
+  if (!userId || !detail.current_price) return { ...detail, your_price: null, your_audience: null };
+
+  const member = await prisma.member.findFirst({
+    where: { team_users: { some: { user_id: userId, status: 1 } }, deletedAt: null },
+    select: { current_term: { select: { valid_till: true } } },
+  });
+
+  const graceDays = await getNumericSetting(SETTING_KEYS.MEMBERSHIP_GRACE_DAYS, DEFAULT_GRACE_DAYS);
+
+  const audience = audienceFor({
+    membershipValidTill: member?.current_term?.valid_till ?? null,
+    graceDays,
+    on: now,
+  });
+
+  return {
+    ...detail,
+    your_audience: audience,
+    your_price:
+      audience === 'MEMBER'
+        ? detail.current_price.member_price
+        : detail.current_price.non_member_price,
+    /* When it expired, so the page can say how long is left to renew. */
+    membership_valid_till: member?.current_term?.valid_till ?? null,
+    grace_days: graceDays,
+  };
 };

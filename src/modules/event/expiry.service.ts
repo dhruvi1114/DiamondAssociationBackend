@@ -6,6 +6,7 @@ import { getNumericSetting, SETTING_KEYS } from '@helpers/settings';
 import { logger } from '@logger/logger';
 import { reminderDaysFor } from '@modules/event/event.constants';
 import { touchedBySystem } from '@modules/event/actorColumns';
+import * as notify from '@modules/event/notify';
 import {
   CANCELLED_BY,
   DEFAULT_PAYMENT_HOLD_DAYS,
@@ -65,7 +66,20 @@ export const releaseExpiredHolds = async (now = new Date()): Promise<number> => 
       status: { in: [REGISTRATION_STATUS.PENDING_APPROVAL, REGISTRATION_STATUS.PENDING_PAYMENT] },
       expires_at: { lt: now },
     },
-    select: { id: true, event_id: true, attendee_count: true, invoice_id: true, status: true },
+    select: {
+      id: true,
+      event_id: true,
+      attendee_count: true,
+      invoice_id: true,
+      status: true,
+      user_id: true,
+      member_id: true,
+      contact_email: true,
+      registration_code: true,
+      expires_at: true,
+      event: { select: { title: true, start_at: true } },
+      invoice: { select: { invoice_number: true } },
+    },
   });
 
   let released = 0;
@@ -98,6 +112,25 @@ export const releaseExpiredHolds = async (now = new Date()): Promise<number> => 
             data: { status: InvoiceStatus.CANCELLED },
           });
         }
+
+        // Both halves matter to the reader: the seats are gone, and nothing is
+        // owed. Told only the first, they ring the office about the invoice.
+        await notify.notifyExpired(
+          tx,
+          {
+            userId: hold.user_id,
+            memberId: hold.member_id,
+            toAddress: hold.contact_email,
+            eventTitle: hold.event.title,
+            eventDate: hold.event.start_at,
+            registrationCode: hold.registration_code,
+            seatCount: hold.attendee_count,
+          },
+          {
+            invoice_number: hold.invoice?.invoice_number ?? null,
+            expires_on: hold.expires_at ?? now,
+          },
+        );
 
         await writeAudit(tx, {
           action: AUDIT_ACTIONS.EVENT_REGISTRATION_EXPIRED,
@@ -152,6 +185,10 @@ export const remindersDue = async (now = new Date()) => {
       contact_email: true,
       total_amount: true,
       member_id: true,
+      user_id: true,
+      attendee_count: true,
+      event: { select: { title: true, start_at: true } },
+      invoice: { select: { invoice_number: true } },
     },
   });
 
@@ -160,4 +197,71 @@ export const remindersDue = async (now = new Date()) => {
       ? dueReminders({ registered: row.registered_at, expires: row.expires_at }, now, holdDays)
       : false,
   );
+};
+
+/**
+ * Send tonight's reminders.
+ *
+ * Each is its own transaction, for the same reason the releases are: one
+ * unsendable reminder must not stop the rest.
+ *
+ * Idempotence comes from the day arithmetic rather than a sent-flag: a hold is
+ * due a reminder on specific elapsed days, so a second run on the same day
+ * queues a second copy. The job runs hourly, so that would mean 24 emails a
+ * day — which is why the outbox row is written only once per hold per day,
+ * checked here before queueing.
+ */
+export const sendDueReminders = async (now = new Date()): Promise<number> => {
+  const due = await remindersDue(now);
+  let sent = 0;
+
+  for (const hold of due) {
+    try {
+      const startOfToday = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+      );
+
+      // Already reminded today? The job runs hourly; without this the reader
+      // gets the same warning twenty-four times.
+      const alreadySent = await prisma.notification.count({
+        where: {
+          template_code: 'event.payment_reminder',
+          to_address: hold.contact_email,
+          createdAt: { gte: startOfToday },
+          payload_json: { path: ['registration_code'], equals: hold.registration_code },
+        },
+      });
+
+      if (alreadySent > 0) continue;
+
+      await prisma.$transaction(async (tx) => {
+        await notify.notifyPaymentReminder(
+          tx,
+          {
+            userId: hold.user_id,
+            memberId: hold.member_id,
+            toAddress: hold.contact_email,
+            eventTitle: hold.event.title,
+            eventDate: hold.event.start_at,
+            registrationCode: hold.registration_code,
+            seatCount: hold.attendee_count,
+          },
+          {
+            invoice_number: hold.invoice?.invoice_number ?? '—',
+            total_amount: hold.total_amount.toFixed(2),
+            expires_on: hold.expires_at!,
+          },
+        );
+      });
+
+      sent += 1;
+    } catch (error) {
+      logger.error('event.reminderFailed', {
+        registrationCode: hold.registration_code,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return sent;
 };

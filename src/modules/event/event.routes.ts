@@ -114,6 +114,13 @@ eventAdminRouter.post(
   controller.rejectRegistration,
 );
 
+eventAdminRouter.get(
+  '/payment-submissions',
+  authorize('payment.view'),
+  validateRequest({ query: listRegistrationsSchema }),
+  controller.listPaymentSubmissions,
+);
+
 eventAdminRouter.post(
   '/payment-submissions/:id/verify',
   authorize('payment.record'),
@@ -155,12 +162,21 @@ export const eventMemberRouter = Router();
 eventMemberRouter.use(authenticate);
 
 eventMemberRouter.get(END_POINTS.EVENTS, controller.listMemberEvents);
+// Declared before `/:slug`, or "registrations" is read as an event slug.
+eventMemberRouter.get(`${END_POINTS.EVENTS}/registrations/mine`, controller.listMyBookings);
+
 eventMemberRouter.get(`${END_POINTS.EVENTS}/:slug`, controller.getMemberEvent);
 
 eventMemberRouter.post(
   `${END_POINTS.EVENTS}/:slug/register`,
   validateRequest({ body: registerAsMemberSchema }),
   controller.registerForEvent,
+);
+
+eventMemberRouter.post(
+  `${END_POINTS.EVENTS}/registrations/:id/cancel`,
+  validateRequest({ params: idParamSchema }),
+  controller.cancelOwnBooking,
 );
 
 eventMemberRouter.post(

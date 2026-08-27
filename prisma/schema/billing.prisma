@@ -52,7 +52,10 @@ model Payment {
   /// 5 = REFUNDED, 6 = PARTIALLY_REFUNDED.
   status Int @db.SmallInt
 
-  /// When the money landed. NULL until it does.
+  /// When the money landed. Required for SUCCESS, REFUNDED and PARTIALLY_REFUNDED
+  /// — all of which mean it did arrive — and absent otherwise. A refunded payment
+  /// keeps this date: clearing it would erase when the money came in, which is
+  /// the fact a refund dispute turns on.
   paid_at DateTime? @db.Timestamptz(6)
 
   /// Why a gateway declined, verbatim, so support can quote it back.

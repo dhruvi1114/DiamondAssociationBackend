@@ -160,3 +160,59 @@ export const listAttendees = (
      LIMIT ${query.limit} OFFSET ${offset}
   `);
 };
+
+export interface PaymentSubmissionRow {
+  id: bigint;
+  invoice_id: bigint;
+  invoice_number: string;
+  method: number;
+  reference_no: string;
+  amount: Prisma.Decimal;
+  paid_on: Date;
+  proof_path: string | null;
+  status: number;
+  rejection_reason: string | null;
+  createdAt: Date;
+  paid_by: string | null;
+  event_title: string | null;
+  registration_code: string | null;
+  total: bigint;
+}
+
+/**
+ * The payment claims queue.
+ *
+ * Oldest first, deliberately: this is a work queue, and a newest-first queue is
+ * one where the claim somebody has been waiting on longest keeps sinking out of
+ * sight.
+ *
+ * The payer's name is resolved from whichever side it lives on, and the booking
+ * is joined optionally — a membership invoice has no booking, and this queue is
+ * shared with those.
+ */
+export const listPaymentSubmissions = (
+  db: Db,
+  query: { statuses?: number[]; page: number; limit: number },
+) => {
+  const offset = (query.page - 1) * query.limit;
+  const statuses = query.statuses && query.statuses.length > 0 ? query.statuses : null;
+
+  return db.$queryRaw<PaymentSubmissionRow[]>(Prisma.sql`
+    SELECT s."id", s."invoice_id", i."invoice_number", s."method", s."reference_no",
+           s."amount", s."paid_on", s."proof_path", s."status", s."rejection_reason",
+           s."createdAt",
+           COALESCE(m."company_name", g."company_name", g."full_name") AS paid_by,
+           e."title" AS event_title,
+           r."registration_code",
+           count(*) OVER () AS total
+      FROM "PaymentSubmissions" s
+      JOIN "Invoices" i ON i."id" = s."invoice_id"
+      LEFT JOIN "Members" m ON m."id" = i."member_id"
+      LEFT JOIN "GuestRegistrants" g ON g."id" = i."guest_registrant_id"
+      LEFT JOIN "EventRegistrations" r ON r."invoice_id" = i."id" AND r."deletedAt" IS NULL
+      LEFT JOIN "Events" e ON e."id" = r."event_id"
+     WHERE (${statuses}::int[] IS NULL OR s."status" = ANY(${statuses}::int[]))
+     ORDER BY s."createdAt" ASC
+     LIMIT ${query.limit} OFFSET ${offset}
+  `);
+};

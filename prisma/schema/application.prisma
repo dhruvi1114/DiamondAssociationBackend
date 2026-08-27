@@ -757,7 +757,11 @@ model Receipt {
   /// still names the payer even if the invoice's own member link is ever
   /// changed (it isn't, today, but the column exists to make that impossible
   /// to get wrong).
-  member_id BigInt
+  member_id BigInt?
+
+  /// FK to GuestRegistrants.id — who paid, when the payer is not a member.
+  /// Exactly one of this and `member_id` is set, enforced by a CHECK.
+  guest_registrant_id BigInt?
 
   /// Amount received, INR, 2dp. Always the invoice's total_amount today —
   /// this build has no partial payments.
@@ -780,7 +784,10 @@ model Receipt {
   invoice Invoice @relation(fields: [invoice_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   /// Who paid.
-  member Member @relation(fields: [member_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  member Member? @relation(fields: [member_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  /// The guest who paid, when the payer is not a member.
+  guest_registrant GuestRegistrant? @relation(fields: [guest_registrant_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
   @@index([member_id, paid_at(sort: Desc)])
   @@map("Receipts")

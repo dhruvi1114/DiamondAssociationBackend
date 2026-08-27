@@ -206,7 +206,7 @@ export const listMemberEvents = handler(async (req, res) => {
 
 /** `GET /events/:slug` — one published event, either visibility. */
 export const getMemberEvent = handler(async (req, res) => {
-  const event = await service.getMemberEvent(req.params.slug as string);
+  const event = await service.getMemberEvent(req.params.slug as string, req.actor?.id);
 
   if (!event) {
     throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'event.notFound' });
@@ -511,4 +511,76 @@ export const exportAttendees = handler(async (req, res) => {
     `attachment; filename="attendees-${safeTitle}-${stamp}.xlsx"`,
   );
   res.status(200).send(workbook);
+});
+
+/** `GET /admin/payment-submissions` — the claims waiting to be checked. */
+export const listPaymentSubmissions = handler(async (req, res) => {
+  const page = Number(req.query.page ?? 1);
+  const limit = Math.min(Number(req.query.limit ?? 20), 100);
+
+  const { rows, total } = await eventPayment.listSubmissions({
+    page,
+    limit,
+    statuses: statusList(req.query.status),
+  });
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.GET,
+    data: serialise({ rows }),
+    pagination: { page, limit, total },
+  });
+});
+
+/**
+ * `GET /events/registrations/mine` — the company's own bookings.
+ *
+ * The company comes from the token. An id in the query would let one member read
+ * another's bookings, which no amount of validation downstream can undo.
+ */
+export const listMyBookings = handler(async (req, res) => {
+  const userId = req.actor?.id;
+
+  if (userId === undefined) {
+    throw new AppError({ errorType: ERROR_TYPES.UNAUTHORIZED, messageKey: 'auth.unauthorized' });
+  }
+
+  const member = await memberRepo.findMemberByUserId(prisma, userId);
+
+  if (!member) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'member.notFound' });
+  }
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.GET,
+    data: serialise({ rows: await registration.listMyBookings(member.id) }),
+  });
+});
+
+/** `POST /events/registrations/:id/cancel` — a member calls off their own booking. */
+export const cancelOwnBooking = handler(async (req, res) => {
+  const userId = req.actor?.id;
+
+  if (userId === undefined) {
+    throw new AppError({ errorType: ERROR_TYPES.UNAUTHORIZED, messageKey: 'auth.unauthorized' });
+  }
+
+  const member = await memberRepo.findMemberByUserId(prisma, userId);
+
+  if (!member) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'member.notFound' });
+  }
+
+  const result = await registration.cancelOwnBooking(BigInt(req.params.id as string), {
+    userId,
+    memberId: member.id,
+    ip: req.ip ?? null,
+    userAgent: req.get('user-agent') ?? null,
+    requestId: req.requestId ?? null,
+  });
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'event.bookingCancelled',
+    data: serialise(result),
+  });
 });

@@ -10,6 +10,8 @@ import {
   SUBMISSION_METHOD,
   SUBMISSION_STATUS,
 } from '@modules/event/registration.constants';
+import * as notify from '@modules/event/notify';
+import * as seats from '@modules/event/registration.repository';
 import { holdDeadline } from '@modules/event/registration.service';
 import { touchedByAdmin, touchedByMember } from '@modules/event/actorColumns';
 import { AppError } from '@utils/appError';
@@ -58,7 +60,7 @@ export const submitPayment = async (
 ) => {
   const registration = await prisma.eventRegistration.findFirst({
     where: { id: registrationId, deletedAt: null },
-    include: { invoice: true },
+    include: { invoice: true, event: { select: { title: true, start_at: true } } },
   });
 
   if (!registration) throw notFound('event.registrationNotFound');
@@ -92,6 +94,20 @@ export const submitPayment = async (
         ...touchedByMember(actor.userId),
       },
     });
+
+    await notify.notifyPaymentReceived(
+      tx,
+      {
+        userId: registration.user_id,
+        memberId: registration.member_id,
+        toAddress: registration.contact_email,
+        eventTitle: registration.event.title,
+        eventDate: registration.event.start_at,
+        registrationCode: registration.registration_code,
+        seatCount: registration.attendee_count,
+      },
+      input.reference_no,
+    );
 
     await writeAudit(tx, {
       action: AUDIT_ACTIONS.PAYMENT_SUBMITTED,
@@ -168,20 +184,18 @@ export const verifyPayment = async (id: bigint, actor: AdminActor, now = new Dat
       },
     });
 
-    // A receipt names a member today. A guest's payment is recorded and the
-    // booking confirmed; the receipt document follows when Receipts learns about
-    // guests, which is a change to an M4 table and its own decision.
-    const receipt = invoice.member_id
-      ? await tx.receipt.create({
-          data: {
-            receipt_number: await nextReceiptNumber(tx, now),
-            invoice_id: invoice.id,
-            payment_id: payment.id,
-            member_id: invoice.member_id,
-            amount: invoice.total_amount,
-          },
-        })
-      : null;
+    // Whoever the invoice names. A guest who pays gets a receipt like anyone
+    // else — they have paid the association the same money for the same seat.
+    const receipt = await tx.receipt.create({
+      data: {
+        receipt_number: await nextReceiptNumber(tx, now),
+        invoice_id: invoice.id,
+        payment_id: payment.id,
+        member_id: invoice.member_id,
+        guest_registrant_id: invoice.guest_registrant_id,
+        amount: invoice.total_amount,
+      },
+    });
 
     await tx.paymentSubmission.update({
       where: { id },
@@ -196,6 +210,10 @@ export const verifyPayment = async (id: bigint, actor: AdminActor, now = new Dat
 
     const registration = await tx.eventRegistration.findFirst({
       where: { invoice_id: invoice.id, deletedAt: null },
+      include: {
+        attendees: { select: { full_name: true, email: true, attendee_code: true } },
+        event: { select: { title: true, start_at: true, venue_name: true, city: true } },
+      },
     });
 
     if (registration) {
@@ -210,6 +228,30 @@ export const verifyPayment = async (id: bigint, actor: AdminActor, now = new Dat
       });
     }
 
+    if (registration) {
+      // One message per person, to their own address. The code is what gets them
+      // through the door, and a code in a colleague's inbox is a code the person
+      // holding it does not have.
+      await notify.notifyConfirmed(
+        tx,
+        {
+          userId: registration.user_id,
+          memberId: registration.member_id,
+          toAddress: registration.contact_email,
+          eventTitle: registration.event.title,
+          eventDate: registration.event.start_at,
+          registrationCode: registration.registration_code,
+          seatCount: registration.attendee_count,
+        },
+        {
+          venue: [registration.event.venue_name, registration.event.city]
+            .filter(Boolean)
+            .join(', '),
+          attendees: registration.attendees,
+        },
+      );
+    }
+
     await writeAudit(tx, {
       action: AUDIT_ACTIONS.PAYMENT_VERIFIED,
       entityName: 'PaymentSubmissions',
@@ -218,7 +260,7 @@ export const verifyPayment = async (id: bigint, actor: AdminActor, now = new Dat
       actorId: actor.adminId,
       after: {
         payment_number: payment.payment_number,
-        receipt_number: receipt?.receipt_number ?? null,
+        receipt_number: receipt.receipt_number,
         invoice_number: invoice.invoice_number,
       },
       ip: actor.ip,
@@ -229,7 +271,7 @@ export const verifyPayment = async (id: bigint, actor: AdminActor, now = new Dat
     return {
       id: id.toString(),
       payment_number: payment.payment_number,
-      receipt_number: receipt?.receipt_number ?? null,
+      receipt_number: receipt.receipt_number,
       registration_status: registration ? REGISTRATION_STATUS.CONFIRMED : null,
     };
   });
@@ -266,6 +308,7 @@ export const rejectPayment = async (
 
     const registration = await tx.eventRegistration.findFirst({
       where: { invoice_id: submission.invoice_id, deletedAt: null },
+      include: { event: { select: { title: true, start_at: true } } },
     });
 
     if (registration) {
@@ -277,6 +320,20 @@ export const rejectPayment = async (
           ...touchedByAdmin(actor.adminId),
         },
       });
+
+      await notify.notifyPaymentRejected(
+        tx,
+        {
+          userId: registration.user_id,
+          memberId: registration.member_id,
+          toAddress: registration.contact_email,
+          eventTitle: registration.event.title,
+          eventDate: registration.event.start_at,
+          registrationCode: registration.registration_code,
+          seatCount: registration.attendee_count,
+        },
+        { reason: input.reason, expires_on: expiresAt },
+      );
     }
 
     await writeAudit(tx, {
@@ -325,3 +382,32 @@ export const submitGuestPayment = async (
     userAgent: request.userAgent,
     requestId: request.requestId,
   });
+
+/**
+ * The claims queue, for the admin screen.
+ *
+ * Defaults to what is actually waiting on somebody. A queue that opens showing
+ * every claim ever made is a queue nobody uses, because the work is buried in
+ * the history.
+ */
+export const listSubmissions = async (query: {
+  statuses?: number[];
+  page: number;
+  limit: number;
+}) => {
+  const rows = await seats.listPaymentSubmissions(prisma, {
+    ...query,
+    statuses:
+      query.statuses && query.statuses.length > 0 ? query.statuses : [SUBMISSION_STATUS.PENDING],
+  });
+
+  return {
+    rows: rows.map(({ total: _total, ...row }) => ({
+      ...row,
+      id: row.id.toString(),
+      invoice_id: row.invoice_id.toString(),
+      amount: row.amount.toFixed(2),
+    })),
+    total: rows.length > 0 ? Number(rows[0].total) : 0,
+  };
+};

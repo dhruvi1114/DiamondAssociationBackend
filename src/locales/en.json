@@ -210,7 +210,10 @@
     "paymentSubmitted": "Payment details received. We will confirm once verified.",
     "paymentVerified": "Payment verified",
     "paymentRejected": "Payment claim rejected",
-    "bookingLinkInvalid": "That booking link is no longer valid"
+    "bookingLinkInvalid": "That booking link is no longer valid",
+    "cancelPartiallyFailed": "Some bookings could not be cancelled. The event is unchanged — try again, and tell support if it keeps happening",
+    "cannotCancelBooking": "This booking can no longer be cancelled",
+    "bookingCancelled": "Booking cancelled"
   },
   "communication": {
     "noticeNotFound": "Notice not found",

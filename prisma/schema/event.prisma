@@ -253,6 +253,7 @@ model GuestRegistrant {
 
   /// Payments this guest has made.
   payments Payment[]
+  receipts Receipt[]
 
   @@index([email])
   @@map("GuestRegistrants")

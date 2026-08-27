@@ -37,3 +37,14 @@ export const nextReceiptNumber = async (
 
   return `${prefix}${String(count + 1).padStart(3, '0')}`;
 };
+
+/** `RF` + year + calendar quarter + 3-digit sequence, e.g. RF202603001. */
+export const nextRefundNumber = async (
+  tx: Prisma.TransactionClient,
+  on: Date = new Date(),
+): Promise<string> => {
+  const prefix = quarterPrefix('RF', on);
+  const count = await tx.refund.count({ where: { refund_number: { startsWith: prefix } } });
+
+  return `${prefix}${String(count + 1).padStart(3, '0')}`;
+};

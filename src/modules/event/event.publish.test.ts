@@ -23,6 +23,12 @@ vi.mock('@modules/event/event.repository', () => ({
 
 vi.mock('@helpers/audit', () => ({ writeAudit: (...a: unknown[]) => writeAudit(...a) }));
 
+const cancelEventWithRefunds = vi.fn();
+
+vi.mock('@modules/event/registration.service', () => ({
+  cancelEventWithRefunds: (...a: unknown[]) => cancelEventWithRefunds(...a),
+}));
+
 const { publishEvent, cancelEvent, deleteEvent } = await import('@modules/event/event.service');
 
 const actor = { id: 1n, ip: null, userAgent: null, requestId: null };
@@ -40,6 +46,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   countPublishAudience.mockResolvedValue(1240);
   updateEvent.mockResolvedValue({ id: 5n, status: 1 });
+  cancelEventWithRefunds.mockResolvedValue({ cancelled: 0, refunded: 0, failed: 0 });
 });
 
 describe('publishEvent', () => {
@@ -96,11 +103,33 @@ describe('cancelEvent', () => {
     expect(result).toMatchObject({ id: '5', status: 2 });
   });
 
-  it('refuses while seats are held, until the refund flow exists', async () => {
+  /*
+    The rule changed deliberately: an event with bookings is no longer refused,
+    it is cancelled and everyone is refunded. Refusing was only ever a
+    placeholder for the refund flow not existing yet.
+  */
+  it('cancels every booking and refunds them before marking the event off', async () => {
     findEventById.mockResolvedValue({ ...draft, status: 1, seats_taken: 3 });
+    updateEvent.mockResolvedValue({ id: 5n, status: 2 });
+    cancelEventWithRefunds.mockResolvedValue({ cancelled: 2, refunded: 1, failed: 0 });
+
+    const result = await cancelEvent(5n, { reason: 'Venue withdrew' }, actor);
+
+    expect(cancelEventWithRefunds).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ status: 2, bookings_cancelled: 2, refunds_raised: 1 });
+  });
+
+  /*
+    Half-cancelled is the one state nobody can act on — some attendees told, some
+    not, and no way to tell which from the screen. So the event stays live and
+    the whole thing is retried.
+  */
+  it('leaves the event live if any booking could not be refunded', async () => {
+    findEventById.mockResolvedValue({ ...draft, status: 1, seats_taken: 3 });
+    cancelEventWithRefunds.mockResolvedValue({ cancelled: 1, refunded: 0, failed: 1 });
 
     await expect(cancelEvent(5n, { reason: 'x' }, actor)).rejects.toMatchObject({
-      messageKey: 'event.hasRegistrations',
+      messageKey: 'event.cancelPartiallyFailed',
     });
 
     expect(updateEvent).not.toHaveBeenCalled();
