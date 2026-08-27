@@ -54,6 +54,13 @@ export const PERMISSION_CATALOGUE: { code: string; description: string }[] = [
   { code: 'event.manage', description: 'Create, edit, publish and cancel events.' },
   { code: 'event.attendance', description: 'Record attendance and check attendees in.' },
 
+  { code: 'news.view', description: 'View news articles and news categories.' },
+  {
+    code: 'news.manage',
+    description:
+      'Write, edit, publish, unpublish and archive news articles, and curate news categories.',
+  },
+
   { code: 'notice.view', description: 'View notices and circulars.' },
   { code: 'notice.manage', description: 'Create and edit notices and circulars.' },
   { code: 'notice.publish', description: 'Publish a notice to its audience.' },

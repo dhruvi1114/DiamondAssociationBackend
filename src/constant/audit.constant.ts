@@ -242,6 +242,26 @@ export const AUDIT_ACTIONS = {
   PAYMENT_VERIFIED: 'payment_submission.verified',
   /** Staff could not find the money and said why. */
   PAYMENT_SUBMISSION_REJECTED: 'payment_submission.rejected',
+
+  // --- M9: news -------------------------------------------------------------
+  /** A news article was started as a draft. */
+  NEWS_CREATED: 'news_article.created',
+  /** A news article's text, cover, category or visibility was edited. */
+  NEWS_UPDATED: 'news_article.updated',
+  /** A news article went live on the site. */
+  NEWS_PUBLISHED: 'news_article.published',
+  /** A published article was pulled back to draft. */
+  NEWS_UNPUBLISHED: 'news_article.unpublished',
+  /** An article was retired from the site but kept in the record. */
+  NEWS_ARCHIVED: 'news_article.archived',
+  /** A news article was removed. */
+  NEWS_DELETED: 'news_article.deleted',
+  /** A news category was added. */
+  NEWS_CATEGORY_CREATED: 'news_category.created',
+  /** A news category was renamed or reordered. */
+  NEWS_CATEGORY_UPDATED: 'news_category.updated',
+  /** A news category with no articles was removed. */
+  NEWS_CATEGORY_DELETED: 'news_category.deleted',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

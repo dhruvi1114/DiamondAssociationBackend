@@ -1,0 +1,284 @@
+// M9 — Public website content.
+//
+// News is the association's own writing, published to the website: the homepage
+// Newsroom block, the `/news` listing and one page per article. It is not a
+// notice and not a circular. A circular is a message pushed to chosen members
+// and tracked per recipient (M8); news is a page that sits on the site, is found
+// by Google, and nobody is told about. Separate audiences, separate lifecycles,
+// separate tables.
+//
+// Enum columns are `smallint` codes, the convention for tables created from M7
+// onward, and `visibility` deliberately reuses the codes `Events.visibility`
+// already uses — 0 MEMBER_ONLY, 1 PUBLIC — so the two public-facing lists in
+// this system cannot drift into meaning opposite things by the same number.
+
+/// A label that groups news so a visitor can filter the listing: Press Release,
+/// Industry News, Event Coverage, Association Update.
+///
+/// A master the association curates rather than a code enum, for the reason
+/// `EventTypes` is one: the vocabulary belongs to the trade body, and a list that
+/// can only change with a release is a list that quietly stops being used.
+///
+/// Deactivated, never deleted, once articles carry it. An article already filed
+/// under a category keeps it — that is what the article WAS filed as — so
+/// `is_active` says only whether the compose form may still offer it.
+model NewsCategory {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Stable machine name, e.g. PRESS_RELEASE. Immutable once created: reports and
+  /// any future hard-coded reference read this, not the display name.
+  code String @unique @db.VarChar(30)
+
+  /// Display name shown in the compose dropdown and on the filter tab, e.g. "Press Release".
+  name String @db.VarChar(120)
+
+  /// URL segment for the filter, e.g. press-release in /news?category=press-release.
+  /// Unique because it addresses the filter; renaming it breaks any link already shared.
+  slug String @unique @db.VarChar(140)
+
+  /// Tab order on the listing page. Lower first.
+  display_order Int @default(0)
+
+  /// Whether the compose form may still offer it. Existing articles keep theirs regardless.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// FK to AdminUsers.id — staff account that created this row.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// FK to AdminUsers.id — staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// Soft-delete timestamp (UTC). NULL means live; all reads filter on it.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// Articles filed under this category.
+  articles NewsArticle[]
+
+  @@index([is_active, display_order])
+  @@map("NewsCategories")
+}
+
+/// One news article.
+///
+/// Written as a draft, then published. There is no scheduled state and no
+/// approval chain: the association asked for draft-and-publish, and a status
+/// nothing can move a row into is a status that only ever confuses the screen.
+///
+/// Archiving rather than deleting is the retirement path. A press release that
+/// has been on the public web and in Google's index for two years is a record of
+/// what the association said; removing the row would also remove the audit trail
+/// of who published it.
+model NewsArticle {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// URL segment, e.g. gjepc-seminar-b2b-e-commerce-delhi.
+  ///
+  /// Generated from the title and editable only while the article is a draft.
+  /// Once published the address has been shared, indexed and linked to, and a
+  /// slug that keeps changing is a site that keeps producing dead links.
+  slug String @unique @db.VarChar(180)
+
+  /// Headline, shown on the card, the article page and the browser tab.
+  title String @db.VarChar(220)
+
+  /// The two lines printed on the card and used as the meta description and the
+  /// link preview when the article is shared. Required: a card with no summary
+  /// is a card with a hole in it, and letting it fall back to the first words of
+  /// the body produces previews that start mid-sentence.
+  excerpt String @db.VarChar(400)
+
+  /// The article itself, rich text as HTML.
+  ///
+  /// Sanitised on the server before it is written, never on the way out: this
+  /// markup is served to logged-out browsers, so anything a paste from Word or a
+  /// compromised staff login could smuggle in has to be gone before it is stored.
+  body String @db.Text
+
+  /// Storage key of the cover image, through `@helpers/storage`. Never a public
+  /// URL — the image is streamed by an endpoint that first re-checks the
+  /// article's status and visibility, so a members-only cover cannot be reached
+  /// by guessing a path.
+  cover_image_path String? @db.Text
+
+  /// Alt text for the cover. Carried because the cover is the one image on the
+  /// page a screen reader cannot skip past, and because it is what search
+  /// engines read the picture as.
+  cover_image_alt String? @db.VarChar(200)
+
+  /// FK to NewsCategories.id — which filter tab this appears under.
+  /// ON DELETE RESTRICT: a category in use cannot be pulled out from under its
+  /// articles; the master deactivates instead. Nullable so an article can exist
+  /// before the association has settled on its category list.
+  category_id BigInt?
+
+  /// 0 = MEMBER_ONLY, 1 = PUBLIC. Same codes as `Events.visibility`.
+  ///
+  /// Member-only articles are absent from every public query rather than fetched
+  /// and hidden — a 403 would confirm the article exists, which is itself the
+  /// information being withheld. PUBLIC by default: most association news is
+  /// written to be found.
+  visibility Int @default(1) @db.SmallInt
+
+  /// 0 = DRAFT, 1 = PUBLISHED, 2 = ARCHIVED.
+  status Int @default(0) @db.SmallInt
+
+  /// When the article first went live (UTC). Stamped on the first publish and
+  /// kept through an unpublish-and-republish, because it is the date printed on
+  /// the card and the date the article is ordered by; re-stamping it would move
+  /// a two-year-old press release back to the top of the homepage after a typo fix.
+  published_at DateTime? @db.Timestamptz(6)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// FK to AdminUsers.id — staff account that wrote this article.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// FK to AdminUsers.id — staff account that last changed it.
+  updated_by_admin_id BigInt?
+
+  /// Soft-delete timestamp (UTC). NULL means live; all reads filter on it.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The category this article is filed under.
+  category NewsCategory? @relation(fields: [category_id], references: [id], onDelete: Restrict)
+
+  /// Images placed inside the body.
+  images NewsArticleImage[]
+
+  /// Files offered for download at the foot of the article.
+  attachments NewsArticleAttachment[]
+
+  /// The listing queries, in the order they filter: live rows of the right
+  /// visibility, newest first. Covers the homepage block and /news alike.
+  @@index([status, visibility, published_at])
+  /// The category filter tab, which adds one equality in front of the same sort.
+  @@index([category_id, status, published_at])
+  @@map("NewsArticles")
+}
+
+/// An image placed inside an article's body.
+///
+/// Rows exist so the files are owned by something. The editor uploads a picture
+/// the moment it is dropped in, which is before the article is saved and possibly
+/// before it is ever published — without a row per upload, every abandoned draft
+/// would leave bytes on disk that nothing in the system knows the name of.
+///
+/// Deleting the article cascades, so the files can be swept in the same step.
+model NewsArticleImage {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to NewsArticles.id. ON DELETE CASCADE — the image belongs to the article
+  /// and has no meaning without it.
+  article_id BigInt
+
+  /// The address this image is served at, e.g. /api/v1/public/news/media/<public_id>.
+  ///
+  /// A random id rather than the row id, because this URL is written into the
+  /// article body and has to work for every audience without being rewritten:
+  /// the same markup is read by a logged-out visitor, by a member and by the
+  /// staff member editing the draft. An enumerable /media/1, /media/2 would hand
+  /// a stranger every picture in every unpublished draft; 122 bits of randomness
+  /// makes the URL itself the permission.
+  public_id String @unique @db.Uuid
+
+  /// Key in the storage adapter, e.g. news/47/inline-<uuid>.jpg.
+  file_path String @db.Text
+
+  /// The uploader's own filename. Never used to build a path.
+  original_name String @db.VarChar(255)
+
+  /// MIME type confirmed by sniffing the file's magic bytes, not the upload header.
+  mime_type String @db.VarChar(100)
+
+  /// File size in bytes, checked against the ceiling before storing.
+  size_bytes BigInt
+
+  /// SHA-256 of the stored bytes, as for every other stored file.
+  checksum_sha256 String @db.Char(64)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// FK to AdminUsers.id — staff account that uploaded it.
+  created_by_admin_id BigInt?
+
+  /// The article this image belongs to.
+  article NewsArticle @relation(fields: [article_id], references: [id], onDelete: Cascade)
+
+  @@index([article_id])
+  @@map("NewsArticleImages")
+}
+
+/// A file offered for download at the foot of an article.
+///
+/// A table rather than four columns on the article, because an association
+/// publishing a circular attaches the circular, its annexure and the form to
+/// fill in — and a single slot forces the writer to choose which of the three
+/// the reader gets. The columns it replaces (`attachment_path` and its three
+/// companions) were exactly that single slot.
+///
+/// Ordered by `display_order`, so the covering letter can be listed before the
+/// annexure it refers to rather than in upload order.
+model NewsArticleAttachment {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to NewsArticles.id. ON DELETE CASCADE — the file belongs to the article
+  /// and has no meaning without it.
+  article_id BigInt
+
+  /// The address this file is downloaded from, e.g.
+  /// /api/v1/public/news/<slug>/attachments/<public_id>.
+  ///
+  /// Random rather than the row id, for the reason the inline images carry one:
+  /// an enumerable /attachments/1 would walk every file on every unpublished
+  /// draft. The endpoint checks the parent article's visibility as well, so this
+  /// is a second lock rather than the only one.
+  public_id String @unique @db.Uuid
+
+  /// Key in the storage adapter, e.g. news/47/<uuid>.pdf. Never a public URL —
+  /// downloads go through an authorised endpoint.
+  file_path String @db.Text
+
+  /// The uploader's own filename, shown on the download button. Never used to
+  /// build a path.
+  original_name String @db.VarChar(255)
+
+  /// MIME type confirmed by sniffing the file's magic bytes, not the upload header.
+  mime_type String @db.VarChar(100)
+
+  /// File size in bytes, shown beside the download button so a reader on a phone
+  /// connection knows what they are about to pull down.
+  size_bytes BigInt
+
+  /// SHA-256 of the stored bytes, as for every other stored file.
+  checksum_sha256 String @db.Char(64)
+
+  /// Order shown under the article. Lower first.
+  display_order Int @default(0)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// FK to AdminUsers.id — staff account that uploaded it.
+  created_by_admin_id BigInt?
+
+  /// The article this file belongs to.
+  article NewsArticle @relation(fields: [article_id], references: [id], onDelete: Cascade)
+
+  @@index([article_id, display_order])
+  @@map("NewsArticleAttachments")
+}

@@ -51,4 +51,21 @@ describe('route mounts', () => {
 
     expect(mount?.path).toBe('`${END_POINTS.V1}${END_POINTS.EVENTS}`');
   });
+
+  /*
+    The member news router opens with a path-less `use(authenticate)` for the
+    same reason the event one does, so it fails in the same way if it is ever
+    mounted anywhere broader than its own namespace.
+  */
+  it('mounts the member news router under /news', () => {
+    const mount = mounts.find((entry) => entry.router === 'newsMemberRouter');
+
+    expect(mount?.path).toBe('`${END_POINTS.V1}${END_POINTS.NEWS}`');
+  });
+
+  it('mounts the public news router under /public, where nothing authenticates', () => {
+    const mount = mounts.find((entry) => entry.router === 'newsPublicRouter');
+
+    expect(mount?.path).toBe('`${END_POINTS.V1}${END_POINTS.PUBLIC}`');
+  });
 });

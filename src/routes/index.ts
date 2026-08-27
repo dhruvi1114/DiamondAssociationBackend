@@ -14,6 +14,7 @@ import {
   eventPublicRouter,
 } from '@modules/event/event.routes';
 import { mastersAdminRouter, mastersPublicRouter } from '@modules/masters/masters.routes';
+import { newsAdminRouter, newsMemberRouter, newsPublicRouter } from '@modules/news/news.routes';
 import {
   documentRouter,
   invoiceRouter,
@@ -65,6 +66,14 @@ router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, eventAdminRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, eventPublicRouter);
 
 router.use(`${END_POINTS.V1}${END_POINTS.EVENTS}`, eventMemberRouter);
+
+// M9 — news: the association's own writing on the public website. Three
+// audiences, one set of readers: the public router never authenticates, so the
+// repository's public filter is what a logged-out visitor gets; the member
+// router adds the member-only articles on top of the same list.
+router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, newsAdminRouter);
+router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, newsPublicRouter);
+router.use(`${END_POINTS.V1}${END_POINTS.NEWS}`, newsMemberRouter);
 
 // M5 — invoice and receipt PDFs, both audiences.
 router.use(`${END_POINTS.V1}${END_POINTS.INVOICES}`, invoiceRouter);

@@ -21,6 +21,10 @@ export const END_POINTS = {
   PAYMENTS: '/payments',
   EVENTS: '/events',
   NOTICES: '/notices',
+  // M9 — the association's own writing, published to the public website. Not a
+  // notice: a notice is pushed to chosen members, news is a page anyone can read.
+  NEWS: '/news',
+  NEWS_CATEGORIES: '/news-categories',
   NOTIFICATIONS: '/notifications',
   DOCUMENTS: '/documents',
   DIRECTORY: '/directory',
