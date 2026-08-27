@@ -90,6 +90,8 @@ export const SETTING_KEYS = {
   ORG_LOGO: 'organisation.logo',
   /** Storage key of the square mark. Empty = none uploaded. */
   ORG_LOGO_MARK: 'organisation.logo_mark',
+  /** Storage key of the authorised signature image. Empty = none uploaded. */
+  ORG_SIGNATURE: 'organisation.signature',
   /** Leading token of every invoice number — `IN` in `IN202603001`. */
   INVOICE_PREFIX: 'billing.invoice_prefix',
   /** Free text printed at the foot of every invoice. */

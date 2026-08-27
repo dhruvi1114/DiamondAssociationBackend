@@ -37,6 +37,8 @@ export interface ReceiptInfo {
 export interface ReceiptTemplateInput {
   org: OrgInfo;
   logo: Buffer | null;
+  /** The uploaded signature, or null when the association has not supplied one. */
+  signature?: Buffer | null;
   member: MemberInfo;
   invoice: ReceiptInvoiceInfo;
   items: LineItem[];
@@ -121,6 +123,6 @@ export const renderReceiptPdf = (input: ReceiptTemplateInput): Promise<Buffer> =
       .fontSize(15)
       .text(money(input.receipt.amount, input.invoice.currency), PAGE.margin + 54, y + 26);
 
-    drawFooter(doc, input.org);
+    drawFooter(doc, input.org, input.signature);
     doc.end();
   });

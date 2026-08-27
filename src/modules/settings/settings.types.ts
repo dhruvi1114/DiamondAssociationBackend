@@ -80,6 +80,7 @@ export const EDITABLE_SETTINGS: Record<string, z.ZodType<string>> = {
   */
   'organisation.logo': z.literal(''),
   'organisation.logo_mark': z.literal(''),
+  'organisation.signature': z.literal(''),
   /*
     Uppercase letters and digits only, and short. It is concatenated straight
     into the invoice number with no separator (`IN` + `202603` + `001`), so a

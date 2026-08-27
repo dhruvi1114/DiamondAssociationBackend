@@ -54,6 +54,8 @@ export type InvoiceLineItem = LineItem;
 export interface InvoiceTemplateInput {
   org: OrgInfo;
   logo: Buffer | null;
+  /** The uploaded signature, or null when the association has not supplied one. */
+  signature?: Buffer | null;
   member: MemberInfo;
   invoice: InvoiceInfo;
   items: InvoiceLineItem[];
@@ -135,6 +137,6 @@ export const renderInvoicePdf = (input: InvoiceTemplateInput): Promise<Buffer> =
       'This is a system-generated invoice and does not require a signature.',
     );
 
-    drawFooter(doc, input.org);
+    drawFooter(doc, input.org, input.signature);
     doc.end();
   });

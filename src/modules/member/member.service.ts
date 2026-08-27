@@ -805,20 +805,35 @@ const orgInfo = async () => {
  */
 const BUNDLED_LOGO_PATH = path.join(__dirname, '../../assets/brand/logo.png');
 
-const orgLogo = async (): Promise<Buffer | null> => {
+const readSlot = async (slot: Parameters<typeof readBranding>[0]): Promise<Buffer | null> => {
   try {
-    const { stream } = await readBranding('logo');
+    const { stream } = await readBranding(slot);
     const chunks: Buffer[] = [];
     for await (const chunk of stream) chunks.push(chunk as Buffer);
     return Buffer.concat(chunks);
   } catch {
-    try {
-      return await fs.readFile(BUNDLED_LOGO_PATH);
-    } catch {
-      return null;
-    }
+    return null;
   }
 };
+
+const orgLogo = async (): Promise<Buffer | null> => {
+  const uploaded = await readSlot('logo');
+
+  if (uploaded) return uploaded;
+
+  try {
+    return await fs.readFile(BUNDLED_LOGO_PATH);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * No bundled fallback, unlike the logo: a signature nobody uploaded is a
+ * signature nobody gave, and printing a stand-in would be a forgery. Absent, the
+ * footer keeps its text-only "Authorised Signatory" line.
+ */
+const orgSignature = (): Promise<Buffer | null> => readSlot('signature');
 
 /** Same preference order as the admin Company card: registered, then primary, then first. */
 const formatMemberAddress = (
@@ -935,11 +950,12 @@ export const getInvoicePdf = async (
     };
   }
 
-  const [org, logo] = await Promise.all([orgInfo(), orgLogo()]);
+  const [org, logo, signature] = await Promise.all([orgInfo(), orgLogo(), orgSignature()]);
 
   const buffer = await renderInvoicePdf({
     org,
     logo,
+    signature,
     member: billedParty(invoice),
     invoice: {
       invoice_number: invoice.invoice_number,
@@ -999,11 +1015,12 @@ export const getReceiptPdf = async (
     };
   }
 
-  const [org, logo] = await Promise.all([orgInfo(), orgLogo()]);
+  const [org, logo, signature] = await Promise.all([orgInfo(), orgLogo(), orgSignature()]);
 
   const buffer = await renderReceiptPdf({
     org,
     logo,
+    signature,
     member: billedParty(receipt.invoice),
     invoice: {
       invoice_number: receipt.invoice.invoice_number,

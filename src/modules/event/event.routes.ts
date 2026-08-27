@@ -100,6 +100,13 @@ eventAdminRouter.get(
   controller.listRegistrations,
 );
 
+eventAdminRouter.get(
+  '/event-registrations/:id',
+  authorize('event.view'),
+  validateRequest({ params: idParamSchema }),
+  controller.getRegistration,
+);
+
 eventAdminRouter.post(
   '/event-registrations/:id/approve',
   authorize('event.manage'),

@@ -31,6 +31,12 @@ import { AppError } from '@utils/appError';
 export const BRANDING_SLOTS = {
   logo: SETTING_KEYS.ORG_LOGO,
   'logo-mark': SETTING_KEYS.ORG_LOGO_MARK,
+  /*
+    The authorised signature printed on an invoice or receipt. An uploaded
+    image for the same reason the logo is one: it is a scan of something signed
+    on paper, and a typed name is not a signature.
+  */
+  signature: SETTING_KEYS.ORG_SIGNATURE,
 } as const;
 
 export type BrandingSlot = keyof typeof BRANDING_SLOTS;
@@ -66,6 +72,42 @@ export interface BrandingFile {
   mime: string;
   key: string;
 }
+
+/**
+ * Slots that are printed on a generated document.
+ *
+ * `logo-mark` is not one: it is the favicon and the collapsed sidebar, and
+ * neither is a PDF.
+ */
+const PRINTED_SLOTS: BrandingSlot[] = ['logo', 'signature'];
+
+/**
+ * Throw away every cached invoice and receipt PDF.
+ *
+ * A rendered PDF is stored on the row and served again on the next download, so
+ * without this an association that uploads a signature keeps handing out the
+ * documents it generated before it had one — the setting changes and nothing
+ * visible does, which reads as the upload having failed.
+ *
+ * Only the pointer is cleared. The old file is left in storage rather than
+ * chased down one row at a time: a document somebody may already be holding a
+ * link to is not worth deleting to save the disk, and the next download writes
+ * a fresh key anyway.
+ */
+const dropCachedDocuments = async (slot: BrandingSlot) => {
+  if (!PRINTED_SLOTS.includes(slot)) return;
+
+  const [invoices, receipts] = await prisma.$transaction([
+    prisma.invoice.updateMany({ where: { pdf_path: { not: null } }, data: { pdf_path: null } }),
+    prisma.receipt.updateMany({ where: { pdf_path: { not: null } }, data: { pdf_path: null } }),
+  ]);
+
+  logger.info('branding.cachedDocumentsDropped', {
+    slot,
+    invoices: invoices.count,
+    receipts: receipts.count,
+  });
+};
 
 /**
  * Replace the image in a slot.
@@ -152,6 +194,8 @@ export const putBranding = async (
       });
   }
 
+  await dropCachedDocuments(slot);
+
   return { key, value: stored.key, mime, size: stored.size };
 };
 
@@ -183,6 +227,8 @@ export const clearBranding = async (slot: BrandingSlot, actor: Actor) => {
   await getStorage()
     .delete(previous)
     .catch(() => undefined);
+
+  await dropCachedDocuments(slot);
 
   return { key, value: '' };
 };

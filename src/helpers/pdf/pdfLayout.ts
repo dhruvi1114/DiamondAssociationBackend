@@ -397,8 +397,25 @@ export function drawNoticeBox(
   return y + height + 20;
 }
 
-export function drawFooter(doc: InstanceType<typeof PDFDocument>, org: OrgInfo): void {
+/** The box an uploaded signature is fitted into, above the "Authorised Signatory" line. */
+const SIGNATURE_BOX = { width: 130, height: 32, gap: 6 };
+
+export function drawFooter(
+  doc: InstanceType<typeof PDFDocument>,
+  org: OrgInfo,
+  /**
+   * The uploaded signature image (System Settings → Organisation), or null when
+   * the association has not uploaded one. Absent, the footer keeps the pen glyph
+   * it has always drawn: the line says who signs, and nothing pretends they did.
+   */
+  signature?: Buffer | null,
+): void {
   const y = doc.page.height - doc.page.margins.bottom - 34;
+
+  // Read BEFORE anything below writes: the footer's own text moves the cursor
+  // into the footer band, and asking afterwards asks where the footer is, not
+  // where the document's content ended.
+  const contentBottom = doc.y;
 
   doc.moveTo(PAGE.margin, y).lineTo(PAGE.contentRight, y).strokeColor(INK.rule).stroke();
 
@@ -415,9 +432,37 @@ export function drawFooter(doc: InstanceType<typeof PDFDocument>, org: OrgInfo):
       { width: 300 },
     );
 
+  /*
+    The image goes ABOVE the rule, in the space the last block of content left
+    behind — which is why it is conditional on there being any. A signature
+    printed over a line item is worse than no signature at all, so on a page
+    that runs to the bottom the footer silently keeps its text-only form.
+  */
+  const signatureTop = y - SIGNATURE_BOX.height - SIGNATURE_BOX.gap;
+  const fits = signature != null && contentBottom < signatureTop;
+
+  if (fits) {
+    doc.image(signature as Buffer, PAGE.contentRight - SIGNATURE_BOX.width, signatureTop, {
+      fit: [SIGNATURE_BOX.width, SIGNATURE_BOX.height],
+      align: 'right',
+      valign: 'bottom',
+    });
+  }
+
   const signatoryText = 'Authorised Signatory';
   doc.font(FONT_SANS).fontSize(9);
   const signatoryWidth = doc.widthOfString(signatoryText);
+
+  if (fits) {
+    // No pen glyph beside a real signature — the drawing of a pen next to the
+    // thing it stands in for reads as clip art, not as a second signature.
+    doc.fillColor(INK.muted).text(signatoryText, PAGE.contentRight - signatoryWidth, y + 13, {
+      width: signatoryWidth + 2,
+    });
+
+    return;
+  }
+
   const signatoryIconX = PAGE.contentRight - signatoryWidth - iconSize - 6;
   drawIcon(doc, 'penLine', signatoryIconX, y + 11, iconSize, INK.muted);
   doc

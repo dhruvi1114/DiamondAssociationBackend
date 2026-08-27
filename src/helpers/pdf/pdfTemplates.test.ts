@@ -207,3 +207,57 @@ describe('renderReceiptPdf', () => {
     expect(isPdf(buffer)).toBe(true);
   });
 });
+
+/*
+  The signature is the one thing on these documents that is a scan of something
+  a person actually signed, so the test that matters is that it reaches the page
+  rather than being silently dropped — the first cut of this drew it only when
+  the cursor was above the footer, and by then the footer had already moved the
+  cursor into itself, so nothing was ever drawn.
+*/
+describe('the authorised signature', () => {
+  // 1×1 PNG. The bytes are irrelevant; that PDFKit embeds them is not.
+  const SIGNATURE = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+
+  it('is embedded in an invoice when one has been uploaded', async () => {
+    const base = { org: ORG, logo: null, member: MEMBER, invoice: INVOICE, items: ITEMS };
+
+    const signed = await renderInvoicePdf({ ...base, signature: SIGNATURE });
+    const unsigned = await renderInvoicePdf({ ...base, signature: null });
+
+    expect(isPdf(signed)).toBe(true);
+    expect(signed.byteLength).toBeGreaterThan(unsigned.byteLength);
+  });
+
+  it('is embedded in a receipt when one has been uploaded', async () => {
+    const base = {
+      org: ORG,
+      logo: null,
+      member: MEMBER,
+      invoice: {
+        invoice_number: INVOICE.invoice_number,
+        issue_date: INVOICE.issue_date,
+        due_date: INVOICE.due_date,
+        subtotal: INVOICE.subtotal,
+        tax_amount: INVOICE.tax_amount,
+        total_amount: INVOICE.total_amount,
+        currency: INVOICE.currency,
+      },
+      items: ITEMS,
+      receipt: {
+        receipt_number: 'RC202603001',
+        amount: '23600.00',
+        paid_at: new Date('2026-08-26'),
+      },
+    };
+
+    const signed = await renderReceiptPdf({ ...base, signature: SIGNATURE });
+    const unsigned = await renderReceiptPdf({ ...base, signature: null });
+
+    expect(isPdf(signed)).toBe(true);
+    expect(signed.byteLength).toBeGreaterThan(unsigned.byteLength);
+  });
+});

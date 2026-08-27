@@ -271,6 +271,14 @@ const searchTerm = (raw: unknown): string | undefined => {
   return value.length > 0 ? value : undefined;
 };
 
+/** `GET /admin/event-registrations/:id` — one booking, everything about it (A-23). */
+export const getRegistration = handler(async (req, res) => {
+  handleApiResponse(res, {
+    responseType: RES_STATUS.GET,
+    data: serialise(await registration.getRegistration(BigInt(req.params.id as string))),
+  });
+});
+
 /** `GET /admin/event-registrations` — the booking list, and the approval queue. */
 export const listRegistrations = handler(async (req, res) => {
   const page = Number(req.query.page ?? 1);

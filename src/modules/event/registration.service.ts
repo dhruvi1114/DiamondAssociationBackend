@@ -56,6 +56,33 @@ const invalid = (messageKey: string): AppError =>
   new AppError({ errorType: ERROR_TYPES.VALIDATION_ERROR, messageKey });
 
 /**
+ * Where correspondence about a booking goes.
+ *
+ * The booking form may nominate an address — a firm that wants event mail at its
+ * accounts inbox — and if it does, that wins. Otherwise it is the login that made
+ * the booking, which is the person expecting the confirmation.
+ *
+ * Resolved at booking and STORED, rather than left null and coalesced when read.
+ * `contact_email` is what every downstream notice addresses: pending payment,
+ * the hold reminders, payment verified, cancellation. Left null, all of them
+ * were queued with no recipient and failed with "EMAIL notification has no
+ * to_address" — silently, because the in-app copy of the same notice went out
+ * fine and nothing on screen said the email had not.
+ *
+ * Still nullable in the return: a booking made by something with no login and no
+ * nominated address has no honest answer, and inventing one would send a
+ * member's booking details to whoever owns that address.
+ */
+export const resolveBookingContact = (
+  input: { contact_name?: string; contact_email?: string; contact_phone?: string },
+  bookingUser: { email: string | null; phone: string | null; full_name: string | null } | null,
+): { name: string | null; email: string | null; phone: string | null } => ({
+  name: input.contact_name ?? bookingUser?.full_name ?? null,
+  email: input.contact_email ?? bookingUser?.email ?? null,
+  phone: input.contact_phone ?? bookingUser?.phone ?? null,
+});
+
+/**
  * `EVT` + year + calendar quarter + sequence, e.g. `EVT202603001`.
  *
  * No separator, matching `invoice_number` and `receipt_number`: the code goes
@@ -191,7 +218,10 @@ export const registerAsMember = async (
   const event = await eventRepo.findMemberEventBySlug(prisma, slug);
 
   if (!event) {
-    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'event.notFound' });
+    throw new AppError({
+      errorType: ERROR_TYPES.NOT_FOUND,
+      messageKey: 'event.registrationNotFound',
+    });
   }
 
   const refusal = bookingRefusal(event, now);
@@ -226,6 +256,13 @@ export const registerAsMember = async (
 
   const expiresAt = await holdDeadline(now);
   const address = member.addresses.find((row) => row.is_primary) ?? member.addresses[0];
+
+  const bookingUser = await prisma.user.findFirst({
+    where: { id: actor.userId },
+    select: { email: true, phone: true, full_name: true },
+  });
+
+  const contact = resolveBookingContact(input, bookingUser);
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -297,9 +334,9 @@ export const registerAsMember = async (
           billing_state: input.billing_state ?? address?.state ?? null,
           billing_pincode: input.billing_pincode ?? address?.pincode ?? null,
           billing_country: address?.country ?? 'India',
-          contact_name: input.contact_name ?? null,
-          contact_email: input.contact_email ?? null,
-          contact_phone: input.contact_phone ?? null,
+          contact_name: contact.name,
+          contact_email: contact.email,
+          contact_phone: contact.phone,
           registered_at: now,
           created_by_user_id: actor.userId,
         },
@@ -348,7 +385,7 @@ export const registerAsMember = async (
       const notice = {
         userId: actor.userId,
         memberId: member.id,
-        toAddress: input.contact_email ?? null,
+        toAddress: contact.email,
         eventTitle: event.title,
         eventDate: event.start_at,
         registrationCode,
@@ -621,6 +658,45 @@ export const listRegistrations = async (query: {
       total_amount: row.total_amount.toFixed(2),
     })),
     total: rows.length > 0 ? Number(rows[0].total) : 0,
+  };
+};
+
+/**
+ * One booking, for the detail page (A-23).
+ *
+ * Assembled from three reads rather than one join: the booking itself, the
+ * people on it, and the payment claims against its invoice. They are three
+ * cardinalities — one, many, many — and folding them into a single statement
+ * would multiply the booking's own columns out across every attendee row.
+ */
+export const getRegistration = async (id: bigint) => {
+  const row = await seats.findRegistrationDetail(prisma, id);
+
+  if (!row) throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'event.notFound' });
+
+  const [attendees, submissions] = await Promise.all([
+    seats.listAttendeesForRegistration(prisma, row.id),
+    row.invoice_id ? seats.listSubmissionsForInvoice(prisma, row.invoice_id) : Promise.resolve([]),
+  ]);
+
+  return {
+    ...row,
+    id: row.id.toString(),
+    event_id: row.event_id.toString(),
+    invoice_id: row.invoice_id?.toString() ?? null,
+    subtotal: row.subtotal.toFixed(2),
+    tax_amount: row.tax_amount.toFixed(2),
+    total_amount: row.total_amount.toFixed(2),
+    invoice_total: row.invoice_total?.toFixed(2) ?? null,
+    attendees: attendees.map((person) => ({
+      ...person,
+      unit_price: person.unit_price.toFixed(2),
+    })),
+    payments: submissions.map((claim) => ({
+      ...claim,
+      id: claim.id.toString(),
+      amount: claim.amount.toFixed(2),
+    })),
   };
 };
 

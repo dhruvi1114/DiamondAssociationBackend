@@ -157,6 +157,15 @@ const SETTINGS: SettingSeed[] = [
     is_public: true,
   },
   {
+    key: 'organisation.signature',
+    value: '',
+    value_type: SettingValueType.STRING,
+    group: 'organisation',
+    description:
+      'Storage key of the authorised signature image, printed on invoices and receipts above the association name. Same upload path as organisation.logo; the settings API accepts only an empty value here, which clears it.',
+    is_public: true,
+  },
+  {
     key: 'billing.invoice_prefix',
     value: 'IN',
     value_type: SettingValueType.STRING,
