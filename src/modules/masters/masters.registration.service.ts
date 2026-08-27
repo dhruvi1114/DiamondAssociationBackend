@@ -7,10 +7,12 @@ import * as repo from '@modules/masters/masters.repository';
 import type {
   CreateCityInput,
   CreateCompanyTypeInput,
+  CreateEventTypeInput,
   CreateCountryInput,
   CreateStateInput,
   UpdateCityInput,
   UpdateCompanyTypeInput,
+  UpdateEventTypeInput,
   UpdateCountryInput,
   UpdateStateInput,
 } from '@modules/masters/masters.types';
@@ -150,6 +152,125 @@ export const deleteCompanyType = async (id: bigint, actor: Actor) => {
     ...audited(actor),
     action: AUDIT_ACTIONS.COMPANY_TYPE_DELETED,
     entityName: 'CompanyTypes',
+    entityId: id,
+    before: { code: row.code, name: row.name },
+  });
+};
+
+/* --- event types (M7) ------------------------------------------------------ */
+
+export const listEventTypes = async (query: {
+  page: number;
+  limit: number;
+  search?: string | undefined;
+  status?: string | undefined;
+}) =>
+  paged(
+    await repo.listEventTypes(prisma, {
+      search: query.search,
+      isActive: selectedActiveState(query.status),
+      limit: query.limit,
+      offset: (query.page - 1) * query.limit,
+    }),
+  );
+
+export const getEventType = async (id: bigint) => {
+  const row = await prisma.eventType.findFirst({ where: { id, deletedAt: null } });
+  if (!row) throw notFound('masters.eventTypeNotFound');
+  return row;
+};
+
+/**
+ * Create, or revive a row soft-deleted earlier under the same code.
+ *
+ * Reviving rather than inserting a second row: the code is unique across
+ * deleted rows too, so a plain insert would collide with a type somebody
+ * removed last year — and re-adding "Seminar" is almost always an undo.
+ */
+export const createEventType = async (input: CreateEventTypeInput, actor: Actor) => {
+  const existing = await prisma.eventType.findFirst({ where: { code: input.code } });
+
+  if (existing?.deletedAt === null) throw conflict('masters.duplicateCode');
+
+  const row =
+    existing !== null
+      ? await prisma.eventType.update({
+          where: { id: existing.id },
+          data: {
+            name: input.name,
+            display_order: input.display_order ?? 0,
+            is_active: input.is_active ?? true,
+            deletedAt: null,
+            updated_by_admin_id: actor.id,
+          },
+        })
+      : await prisma.eventType.create({
+          data: {
+            code: input.code,
+            name: input.name,
+            display_order: input.display_order ?? 0,
+            is_active: input.is_active ?? true,
+            created_by_admin_id: actor.id,
+          },
+        });
+
+  await writeAudit(prisma, {
+    ...audited(actor),
+    action: AUDIT_ACTIONS.EVENT_TYPE_CREATED,
+    entityName: 'EventTypes',
+    entityId: row.id,
+    after: { code: row.code, name: row.name },
+  });
+
+  return row;
+};
+
+export const updateEventType = async (id: bigint, input: UpdateEventTypeInput, actor: Actor) => {
+  const before = await getEventType(id);
+  const updated = await prisma.eventType.update({
+    where: { id },
+    data: { ...input, updated_by_admin_id: actor.id },
+  });
+
+  await writeAudit(prisma, {
+    ...audited(actor),
+    action: AUDIT_ACTIONS.EVENT_TYPE_UPDATED,
+    entityName: 'EventTypes',
+    entityId: id,
+    before: { name: before.name, display_order: before.display_order, is_active: before.is_active },
+    after: {
+      name: updated.name,
+      display_order: updated.display_order,
+      is_active: updated.is_active,
+    },
+  });
+
+  return updated;
+};
+
+/**
+ * Remove a type nothing is using.
+ *
+ * Refused while any event still carries it, with the count in the message.
+ * Deleting it would either orphan those events or silently retype them, and
+ * neither is a thing a master screen should be able to do to the event history.
+ * Deactivating is the answer, and the message says so.
+ */
+export const deleteEventType = async (id: bigint, actor: Actor) => {
+  const row = await getEventType(id);
+  const events = await prisma.event.count({ where: { event_type_id: id, deletedAt: null } });
+
+  if (events > 0) throw conflict('masters.eventTypeInUse', { events });
+
+  await prisma.eventType.update({
+    where: { id },
+    data: { deletedAt: new Date(), updated_by_admin_id: actor.id },
+  });
+
+  await writeAudit(prisma, {
+    ...audited(actor),
+    action: AUDIT_ACTIONS.EVENT_TYPE_DELETED,
+    entityName: 'EventTypes',
     entityId: id,
     before: { code: row.code, name: row.name },
   });

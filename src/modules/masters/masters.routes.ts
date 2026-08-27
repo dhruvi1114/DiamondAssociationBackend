@@ -6,6 +6,8 @@ import {
   categoryListQuerySchema,
   cityListQuerySchema,
   companyTypeListQuerySchema,
+  createEventTypeSchema,
+  eventTypeListQuerySchema,
   countryListQuerySchema,
   createCategorySchema,
   createCitySchema,
@@ -26,6 +28,7 @@ import {
   updateCategorySchema,
   updateCitySchema,
   updateCompanyTypeSchema,
+  updateEventTypeSchema,
   updateCountrySchema,
   updateDocumentTypeSchema,
   updateFeeSchema,
@@ -202,6 +205,49 @@ mastersAdminRouter.delete(
   authorize('category.manage'),
   validateRequest({ params: idParamSchema }),
   controller.deleteCompanyType,
+);
+
+/* --- event types (M7) ------------------------------------------------------ */
+
+/*
+  Authorised on `category.manage`, the same permission every other master on this
+  router uses. A separate `eventType.manage` would be a permission nobody is
+  granted on the day this ships, and the first symptom would be a screen full of
+  403s for the person who asked for the feature.
+*/
+mastersAdminRouter.get(
+  END_POINTS.EVENT_TYPES,
+  authorize('category.view'),
+  validateRequest({ query: eventTypeListQuerySchema }),
+  controller.listEventTypes,
+);
+
+mastersAdminRouter.post(
+  END_POINTS.EVENT_TYPES,
+  authorize('category.manage'),
+  validateRequest({ body: createEventTypeSchema }),
+  controller.createEventType,
+);
+
+mastersAdminRouter.get(
+  `${END_POINTS.EVENT_TYPES}/:id`,
+  authorize('category.view'),
+  validateRequest({ params: idParamSchema }),
+  controller.getEventType,
+);
+
+mastersAdminRouter.patch(
+  `${END_POINTS.EVENT_TYPES}/:id`,
+  authorize('category.manage'),
+  validateRequest({ params: idParamSchema, body: updateEventTypeSchema }),
+  controller.updateEventType,
+);
+
+mastersAdminRouter.delete(
+  `${END_POINTS.EVENT_TYPES}/:id`,
+  authorize('category.manage'),
+  validateRequest({ params: idParamSchema }),
+  controller.deleteEventType,
 );
 
 /* --- countries / states / cities (M5) --------------------------------------- */

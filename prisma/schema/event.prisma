@@ -1,3 +1,51 @@
+/// What kind of event this is — Conference, Seminar, Exhibition, Buyer-Seller Meet.
+///
+/// A master the association maintains itself rather than a code enum, because
+/// the list is theirs: a trade body adds "Buyer-Seller Meet" the week it decides
+/// to run one, and waiting on a release to do it is the reason such fields end
+/// up as free text and stop being countable.
+///
+/// Deactivated rather than deleted once used. An event already tagged with a
+/// type keeps it — the type is part of what that event WAS — so `is_active` says
+/// only whether the form may still offer it.
+model EventType {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Stable machine name, e.g. CONFERENCE. Immutable once created.
+  code String @unique @db.VarChar(30)
+
+  /// Display name shown on the event form and beside the event, e.g. "Conference".
+  name String @db.VarChar(120)
+
+  /// Sort position on the form. Lower first.
+  display_order Int @default(0)
+
+  /// Whether the event form may still offer it. Existing events keep theirs regardless.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Staff account that created this row.
+  created_by_admin_id BigInt?
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Staff account that last changed this row.
+  updated_by_admin_id BigInt?
+
+  /// Soft-delete timestamp (UTC). NULL means live; all reads filter on it.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// Events of this kind.
+  events Event[]
+
+  @@index([is_active, display_order])
+  @@map("EventTypes")
+}
+
 /// An association event: meeting, seminar, expo.
 ///
 /// Created as a draft, published to an audience, and priced through
@@ -53,6 +101,11 @@ model Event {
 
   /// Optional map link shown on the detail page.
   map_url String? @db.Text
+
+  /// What kind of event this is, from the `EventTypes` master. Optional: events
+  /// created before the master existed have none, and an association that does
+  /// not classify its events should not be forced to.
+  event_type_id BigInt?
 
   /// 0 = MEMBER_ONLY, 1 = PUBLIC. Member-only events are absent from every
   /// public query rather than fetched and hidden — a 403 would confirm they exist.
@@ -116,11 +169,20 @@ model Event {
   /// Soft-delete timestamp (UTC). NULL means live; all reads filter on it.
   deletedAt DateTime? @db.Timestamptz(6)
 
+  /// What kind of event this is.
+  ///
+  /// NO ACTION, not SET NULL: a type still pointed at by an event must not be
+  /// deletable out from under it. The master deactivates instead, and the
+  /// service refuses the delete with a count of what is using it — the same
+  /// bargain `CompanyTypes` strikes with members.
+  event_type EventType? @relation(fields: [event_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
   /// The price windows for this event.
   price_tiers        EventPriceTier[]
   eventRegistrations EventRegistration[]
 
   @@index([status, visibility, start_at])
+  @@index([event_type_id])
   @@map("Events")
 }
 

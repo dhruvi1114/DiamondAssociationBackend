@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { EVENT_STATUS } from '@modules/event/event.constants';
+import { REGISTRATION_STATUS, SUBMISSION_STATUS } from '@modules/event/registration.constants';
 import type { Db } from '@db/prisma';
 
 /**
@@ -75,6 +76,15 @@ export interface AdminRegistrationRow {
   registered_at: Date;
   expires_at: Date | null;
   booked_by: string | null;
+  /** The company's own email and phone, or the guest's — whoever the booking is billed to. */
+  contact_email: string | null;
+  contact_phone: string | null;
+  /** Primary-address city for a member, the typed city for a guest. */
+  city: string | null;
+  approved_at: Date | null;
+  approved_by: string | null;
+  rejected_at: Date | null;
+  rejected_by: string | null;
   invoice_number: string | null;
   total: bigint;
 }
@@ -88,26 +98,80 @@ export interface AdminRegistrationRow {
  */
 export const listRegistrationsAdmin = (
   db: Db,
-  query: { eventId?: bigint; statuses?: number[]; page: number; limit: number },
+  query: {
+    eventId?: bigint;
+    statuses?: number[];
+    search?: string | undefined;
+    page: number;
+    limit: number;
+  },
 ) => {
   const offset = (query.page - 1) * query.limit;
   const statuses = query.statuses && query.statuses.length > 0 ? query.statuses : null;
+  /*
+    Matched in SQL, never after fetching. A client-side filter can only see the
+    twenty rows already on screen, so it reports "no matches" for a booking
+    sitting on page four — the same reason the member list searches server-side.
+  */
+  const search = query.search ? `%${query.search}%` : null;
 
   return db.$queryRaw<AdminRegistrationRow[]>(Prisma.sql`
     SELECT r."id", r."registration_code", r."event_id", e."title" AS event_title,
            r."registrant_type", r."status", r."attendee_count", r."total_amount",
            r."registered_at", r."expires_at",
            COALESCE(m."company_name", g."company_name", g."full_name") AS booked_by,
+           -- A member is contacted through the login that owns the company
+           -- record; a guest has no login, so the details they typed are all
+           -- there is. One column either way, because the screen asks one
+           -- question: who do I ring about this booking.
+           COALESCE(u."email", g."email") AS contact_email,
+           COALESCE(u."phone", g."phone") AS contact_phone,
+           COALESCE(addr."city", g."city") AS city,
+           r."approved_at",
+           app."full_name" AS approved_by,
+           -- Rejection has no dedicated columns: the reject path writes
+           -- cancelled_at and stamps updated_by_admin_id, and REJECTED is
+           -- terminal, so nothing touches the row afterwards to overwrite it.
+           -- Guarded by the status so a plain cancellation never reads as one.
+           CASE WHEN r."status" = ${REGISTRATION_STATUS.REJECTED} THEN r."cancelled_at" END AS rejected_at,
+           CASE WHEN r."status" = ${REGISTRATION_STATUS.REJECTED} THEN rej."full_name" END AS rejected_by,
            i."invoice_number",
            count(*) OVER () AS total
       FROM "EventRegistrations" r
       JOIN "Events" e ON e."id" = r."event_id"
       LEFT JOIN "Members" m ON m."id" = r."member_id"
+      LEFT JOIN "Users" u ON u."id" = m."primary_user_id"
       LEFT JOIN "GuestRegistrants" g ON g."id" = r."guest_registrant_id"
       LEFT JOIN "Invoices" i ON i."id" = r."invoice_id"
+      LEFT JOIN "AdminUsers" app ON app."id" = r."approved_by_admin_id"
+      LEFT JOIN "AdminUsers" rej ON rej."id" = r."updated_by_admin_id"
+      -- LATERAL so the city comes off ONE address row rather than whichever the
+      -- planner reached first — same reason the member list does it this way.
+      LEFT JOIN LATERAL (
+        SELECT a."city"
+          FROM "MemberAddresses" a
+         WHERE a."member_id" = m."id" AND a."deletedAt" IS NULL
+         ORDER BY a."is_primary" DESC, a."id" ASC
+         LIMIT 1
+      ) addr ON TRUE
      WHERE r."deletedAt" IS NULL
        AND (${query.eventId ?? null}::bigint IS NULL OR r."event_id" = ${query.eventId ?? null})
        AND (${statuses}::int[] IS NULL OR r."status" = ANY(${statuses}::int[]))
+       -- The six things staff paste into a search box: the booking reference,
+       -- the invoice it raised, who booked, how to reach them, and the event.
+       -- Every one of them is a column the screen already shows, so a hit is
+       -- always visible in the row it returns.
+       AND (${search}::text IS NULL
+            OR r."registration_code" ILIKE ${search}
+            OR i."invoice_number" ILIKE ${search}
+            OR e."title" ILIKE ${search}
+            OR m."company_name" ILIKE ${search}
+            OR g."company_name" ILIKE ${search}
+            OR g."full_name" ILIKE ${search}
+            OR u."email" ILIKE ${search}
+            OR g."email" ILIKE ${search}
+            OR u."phone" ILIKE ${search}
+            OR g."phone" ILIKE ${search})
      ORDER BY r."registered_at" DESC
      LIMIT ${query.limit} OFFSET ${offset}
   `);
@@ -174,6 +238,13 @@ export interface PaymentSubmissionRow {
   rejection_reason: string | null;
   createdAt: Date;
   paid_by: string | null;
+  /** The person who filed the claim, as distinct from the company it is billed to. */
+  claimed_by: string | null;
+  /** The staff account that decided, split by which way they decided. */
+  verified_by: string | null;
+  verified_at: Date | null;
+  rejected_by: string | null;
+  rejected_at: Date | null;
   event_title: string | null;
   registration_code: string | null;
   total: bigint;
@@ -192,16 +263,36 @@ export interface PaymentSubmissionRow {
  */
 export const listPaymentSubmissions = (
   db: Db,
-  query: { statuses?: number[]; page: number; limit: number },
+  query: {
+    statuses?: number[];
+    methods?: number[];
+    search?: string | undefined;
+    page: number;
+    limit: number;
+  },
 ) => {
   const offset = (query.page - 1) * query.limit;
   const statuses = query.statuses && query.statuses.length > 0 ? query.statuses : null;
+  const methods = query.methods && query.methods.length > 0 ? query.methods : null;
+  const search = query.search ? `%${query.search}%` : null;
 
   return db.$queryRaw<PaymentSubmissionRow[]>(Prisma.sql`
     SELECT s."id", s."invoice_id", i."invoice_number", s."method", s."reference_no",
            s."amount", s."paid_on", s."proof_path", s."status", s."rejection_reason",
            s."createdAt",
            COALESCE(m."company_name", g."company_name", g."full_name") AS paid_by,
+           -- Who filed it, not who it is billed to. On a company with several
+           -- team logins those are different people, and the one to ring about a
+           -- mistyped reference is the one who typed it.
+           COALESCE(su."full_name", sg."full_name") AS claimed_by,
+           -- One pair of columns on the table records the decision either way, so
+           -- the status is what says which way it went. Split into two here
+           -- because "who confirmed this" and "who could not find it" are asked
+           -- on different days for different reasons.
+           CASE WHEN s."status" = ${SUBMISSION_STATUS.VERIFIED} THEN va."full_name" END AS verified_by,
+           CASE WHEN s."status" = ${SUBMISSION_STATUS.VERIFIED} THEN s."verified_at" END AS verified_at,
+           CASE WHEN s."status" = ${SUBMISSION_STATUS.REJECTED} THEN va."full_name" END AS rejected_by,
+           CASE WHEN s."status" = ${SUBMISSION_STATUS.REJECTED} THEN s."verified_at" END AS rejected_at,
            e."title" AS event_title,
            r."registration_code",
            count(*) OVER () AS total
@@ -209,9 +300,26 @@ export const listPaymentSubmissions = (
       JOIN "Invoices" i ON i."id" = s."invoice_id"
       LEFT JOIN "Members" m ON m."id" = i."member_id"
       LEFT JOIN "GuestRegistrants" g ON g."id" = i."guest_registrant_id"
+      LEFT JOIN "Users" su ON su."id" = s."submitted_by_user_id"
+      LEFT JOIN "GuestRegistrants" sg ON sg."id" = s."submitted_by_guest_id"
+      LEFT JOIN "AdminUsers" va ON va."id" = s."verified_by_admin_id"
       LEFT JOIN "EventRegistrations" r ON r."invoice_id" = i."id" AND r."deletedAt" IS NULL
       LEFT JOIN "Events" e ON e."id" = r."event_id"
      WHERE (${statuses}::int[] IS NULL OR s."status" = ANY(${statuses}::int[]))
+       AND (${methods}::int[] IS NULL OR s."method" = ANY(${methods}::int[]))
+       -- The bank reference first: a submission is almost always looked up from
+       -- a statement line, and that number is the only thing the two records
+       -- have in common.
+       AND (${search}::text IS NULL
+            OR s."reference_no" ILIKE ${search}
+            OR i."invoice_number" ILIKE ${search}
+            OR r."registration_code" ILIKE ${search}
+            OR e."title" ILIKE ${search}
+            OR m."company_name" ILIKE ${search}
+            OR g."company_name" ILIKE ${search}
+            OR g."full_name" ILIKE ${search}
+            OR su."full_name" ILIKE ${search}
+            OR sg."full_name" ILIKE ${search})
      ORDER BY s."createdAt" ASC
      LIMIT ${query.limit} OFFSET ${offset}
   `);

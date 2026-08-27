@@ -37,8 +37,28 @@ const hasOverlap = (tiers: { starts_on: Date; ends_on: Date }[]): boolean =>
     tiers.some((b, j) => i !== j && a.starts_on <= b.ends_on && b.starts_on <= a.ends_on),
   );
 
+/** Midnight at the top of the day this instant falls in, in the server's zone. */
+const startOfDay = (value: Date): Date =>
+  new Date(value.getFullYear(), value.getMonth(), value.getDate());
+
 const eventShape = z.object({
   title: z.string().trim().min(3).max(200),
+  /*
+    From the `EventTypes` master, and optional. Nullable rather than required
+    because the master is the association's to curate: an empty list on day one
+    must not block event creation, and the events that existed before the field
+    did have no honest value to give it.
+
+    A string on the wire — every id in this API is, since a bigint does not
+    survive JSON intact — and coerced here.
+  */
+  event_type_id: z
+    .string()
+    .trim()
+    .regex(/^\d+$/, 'validation.invalidId')
+    .nullable()
+    .optional()
+    .default(null),
   description: z.string().trim().max(20_000).optional(),
   start_at: z.coerce.date(),
   end_at: z.coerce.date(),
@@ -72,8 +92,23 @@ export const createEventSchema = eventShape
     message: 'validation.eventEndsBeforeItStarts',
     path: ['end_at'],
   })
+  /*
+    A stated deadline has to leave a clear day before the event (client decision,
+    2026-08-27). `<= start_at` used to be enough, which let the deadline land on
+    the morning of the event itself — and a booking taken then arrives after the
+    badges are printed and the caterer's count has gone in, which is the whole
+    reason a deadline exists.
+
+    Compared against the START OF the start day, not the start instant: an event
+    beginning at 09:00 must not accept a deadline of 08:00 the same morning.
+
+    Left blank the field still means "open until the event begins". That is not
+    a deadline at all — it is the absence of one — and an association that wants
+    to take bookings to the last minute is entitled to say so.
+  */
   .refine(
-    (event) => !event.registration_closes_at || event.registration_closes_at <= event.start_at,
+    (event) =>
+      !event.registration_closes_at || event.registration_closes_at < startOfDay(event.start_at),
     { message: 'validation.registrationClosesAfterStart', path: ['registration_closes_at'] },
   )
   .refine(

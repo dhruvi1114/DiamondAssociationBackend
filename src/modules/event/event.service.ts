@@ -70,6 +70,13 @@ const tierRows = (
 
 const eventColumns = (input: CreateEventInput) => ({
   title: input.title,
+  /*
+    Not validated against the master here on purpose. The foreign key already
+    refuses an id that is not a live type, and it does so inside the same
+    transaction as the write — a lookup first would be a second round trip that
+    can still lose the race with a delete happening beside it.
+  */
+  event_type_id: input.event_type_id ? BigInt(input.event_type_id) : null,
   description: input.description ?? null,
   start_at: input.start_at,
   end_at: input.end_at,
@@ -433,6 +440,10 @@ const eventDetail = (
     id: event.id.toString(),
     slug: event.slug,
     title: event.title,
+    /* Both, because the form needs the id to preselect and every reader needs
+       the name to display. */
+    event_type_id: event.event_type_id?.toString() ?? null,
+    event_type: event.event_type?.name ?? null,
     description: event.description,
     banner_path: event.banner_path,
     start_at: event.start_at,
@@ -447,6 +458,9 @@ const eventDetail = (
     map_url: event.map_url,
     visibility: event.visibility,
     capacity: event.capacity,
+    /* So the booking screen can show tax before the reader commits, rather than
+       letting the invoice be the first place they meet it. */
+    tax_rate: event.tax_rate.toFixed(2),
     seats_left: seatsLeft(event.capacity, event.seats_taken),
     registration_opens_at: event.registration_opens_at,
     registration_closes_at: event.registration_closes_at,

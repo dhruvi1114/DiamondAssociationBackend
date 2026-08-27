@@ -316,6 +316,26 @@ export const updateCompanyTypeSchema = z
   })
   .refine((body) => Object.keys(body).length > 0, 'validation.requiredFields');
 
+/*
+  Event types (M7). Same shape as company types: a code that never changes and a
+  name that may. The code is what an import file or a report keys on, so letting
+  it be edited would silently break whatever was keyed to the old one.
+*/
+export const createEventTypeSchema = z.object({
+  code,
+  name,
+  display_order: z.coerce.number().int().min(0).max(9999).optional(),
+  is_active: z.boolean().optional(),
+});
+
+export const updateEventTypeSchema = z
+  .object({
+    name: name.optional(),
+    display_order: z.coerce.number().int().min(0).max(9999).optional(),
+    is_active: z.boolean().optional(),
+  })
+  .refine((body) => Object.keys(body).length > 0, 'validation.requiredFields');
+
 export const createCountrySchema = z.object({
   iso_code: z
     .string({ required_error: 'validation.requiredFields' })
@@ -381,6 +401,10 @@ export const companyTypeListQuerySchema = listQuerySchema.extend({
   status: statusCsv,
 });
 
+export const eventTypeListQuerySchema = listQuerySchema.extend({
+  status: statusCsv,
+});
+
 export const countryListQuerySchema = listQuerySchema.extend({
   status: statusCsv,
 });
@@ -396,7 +420,10 @@ export type CreateStateInput = z.infer<typeof createStateSchema>;
 export type UpdateStateInput = z.infer<typeof updateStateSchema>;
 export type CreateCityInput = z.infer<typeof createCitySchema>;
 export type UpdateCityInput = z.infer<typeof updateCitySchema>;
+export type CreateEventTypeInput = z.infer<typeof createEventTypeSchema>;
+export type UpdateEventTypeInput = z.infer<typeof updateEventTypeSchema>;
 export type CompanyTypeListQuery = z.infer<typeof companyTypeListQuerySchema>;
+export type EventTypeListQuery = z.infer<typeof eventTypeListQuerySchema>;
 export type CountryListQuery = z.infer<typeof countryListQuerySchema>;
 export type StateListQuery = z.infer<typeof stateListQuerySchema>;
 export type CityListQuery = z.infer<typeof cityListQuerySchema>;

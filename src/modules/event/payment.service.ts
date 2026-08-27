@@ -392,6 +392,8 @@ export const submitGuestPayment = async (
  */
 export const listSubmissions = async (query: {
   statuses?: number[];
+  methods?: number[];
+  search?: string | undefined;
   page: number;
   limit: number;
 }) => {

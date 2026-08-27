@@ -396,6 +396,68 @@ export const activeCompanyTypes = (db: Db) =>
   });
 
 /* -------------------------------------------------------------------------- */
+/* Event types (M7)                                                            */
+/* -------------------------------------------------------------------------- */
+
+export interface EventTypeRow {
+  id: bigint;
+  code: string;
+  name: string;
+  display_order: number;
+  is_active: boolean;
+  event_count: bigint;
+  createdAt: Date;
+  updatedAt: Date;
+  total: bigint;
+}
+
+/**
+ * The list, with what each type is being used by.
+ *
+ * `event_count` is on the row rather than fetched per-row on the screen: it is
+ * what decides whether a type can be deleted, and an admin who can see the
+ * number never presses a delete that is going to be refused.
+ */
+export const listEventTypes = (
+  db: Db,
+  params: {
+    search?: string | undefined;
+    isActive?: boolean | undefined;
+    limit: number;
+    offset: number;
+  },
+): Promise<EventTypeRow[]> => {
+  const search = params.search ? `%${params.search}%` : null;
+  const isActive = params.isActive ?? null;
+
+  return db.$queryRaw<EventTypeRow[]>`
+    SELECT et.id,
+           et.code,
+           et.name,
+           et.display_order,
+           et.is_active,
+           (SELECT count(*) FROM "Events" e
+              WHERE e.event_type_id = et.id AND e."deletedAt" IS NULL) AS event_count,
+           et."createdAt",
+           et."updatedAt",
+           count(*) OVER () AS total
+      FROM "EventTypes" et
+     WHERE et."deletedAt" IS NULL
+       AND (${search}::text IS NULL OR et.name ILIKE ${search}::text OR et.code ILIKE ${search}::text)
+       AND (${isActive}::boolean IS NULL OR et.is_active = ${isActive}::boolean)
+     ORDER BY et.display_order ASC, et.name ASC
+     LIMIT ${params.limit} OFFSET ${params.offset}`;
+};
+
+/** The ones the event form may still offer. Deactivated types are not here. */
+export const activeEventTypes = (db: Db) =>
+  db.eventType.findMany({
+    where: { deletedAt: null, is_active: true },
+    select: { id: true, code: true, name: true, display_order: true },
+    orderBy: [{ display_order: 'asc' }, { name: 'asc' }],
+  });
+
+/* -------------------------------------------------------------------------- */
 /* Countries, states, cities                                                    */
 /* -------------------------------------------------------------------------- */
 

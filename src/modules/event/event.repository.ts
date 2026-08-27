@@ -16,17 +16,21 @@ const EVENT_VISIBILITY_PUBLIC = EVENT_VISIBILITY.PUBLIC;
  * new windows coexist would trip the no-overlap exclusion constraint anyway.
  */
 
+/*
+  The type comes back as its name, on both readers. Every caller of these two
+  renders the event for a person — the admin form, the member page, the public
+  page — and not one of them has any use for the id on its own.
+*/
+const eventInclude = {
+  price_tiers: { orderBy: [{ display_order: 'asc' }, { starts_on: 'asc' }] },
+  event_type: { select: { id: true, name: true } },
+} satisfies Prisma.EventInclude;
+
 export const findEventById = (db: Db, id: bigint) =>
-  db.event.findFirst({
-    where: { id, deletedAt: null },
-    include: { price_tiers: { orderBy: [{ display_order: 'asc' }, { starts_on: 'asc' }] } },
-  });
+  db.event.findFirst({ where: { id, deletedAt: null }, include: eventInclude });
 
 export const findEventBySlug = (db: Db, slug: string) =>
-  db.event.findFirst({
-    where: { slug, deletedAt: null },
-    include: { price_tiers: { orderBy: [{ display_order: 'asc' }, { starts_on: 'asc' }] } },
-  });
+  db.event.findFirst({ where: { slug, deletedAt: null }, include: eventInclude });
 
 export const slugExists = async (db: Db, slug: string): Promise<boolean> =>
   (await db.event.count({ where: { slug } })) > 0;
@@ -47,13 +51,23 @@ export interface AdminEventRow {
   id: bigint;
   slug: string;
   title: string;
+  description: string | null;
   start_at: Date;
   end_at: Date;
+  venue_name: string | null;
   city: string | null;
+  registration_closes_at: Date | null;
+  requires_approval: boolean;
   visibility: number;
   status: number;
   capacity: number | null;
   seats_taken: number;
+  event_type_id: bigint | null;
+  event_type: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  created_by: string | null;
+  updated_by: string | null;
   tier_count: bigint;
   total: bigint;
 }
@@ -69,11 +83,26 @@ export const listEventsAdmin = async (query: ListEventsQuery): Promise<AdminEven
   const search = query.search ? `%${query.search}%` : null;
 
   return prisma.$queryRaw<AdminEventRow[]>(Prisma.sql`
-    SELECT e."id", e."slug", e."title", e."start_at", e."end_at", e."city",
+    SELECT e."id", e."slug", e."title", e."description", e."start_at", e."end_at",
+           e."venue_name", e."city", e."registration_closes_at", e."requires_approval",
            e."visibility", e."status", e."capacity", e."seats_taken",
+           e."event_type_id",
+           -- The type's NAME, not its id, for the same reason the staff names
+           -- are resolved below: a column reading "4" is not a kind of event.
+           et."name" AS event_type,
+           e."createdAt", e."updatedAt",
+           /*
+             The staff names, not the ids. A column reading "3" tells an admin
+             nothing; resolving here costs one join rather than a lookup per row.
+           */
+           ca."full_name" AS created_by,
+           ua."full_name" AS updated_by,
            (SELECT count(*) FROM "EventPriceTiers" t WHERE t."event_id" = e."id") AS tier_count,
            count(*) OVER () AS total
       FROM "Events" e
+      LEFT JOIN "AdminUsers" ca ON ca."id" = e."created_by_admin_id"
+      LEFT JOIN "AdminUsers" ua ON ua."id" = e."updated_by_admin_id"
+      LEFT JOIN "EventTypes" et ON et."id" = e."event_type_id"
      WHERE e."deletedAt" IS NULL
        AND (${search}::text IS NULL OR e."title" ILIKE ${search})
        AND (${query.status ?? null}::int IS NULL OR e."status" = ${query.status ?? null})
@@ -171,12 +200,12 @@ export const findPublicEventBySlug = (db: Db, slug: string) =>
       status: EVENT_STATUS_PUBLISHED,
       visibility: EVENT_VISIBILITY_PUBLIC,
     },
-    include: { price_tiers: { orderBy: [{ display_order: 'asc' }, { starts_on: 'asc' }] } },
+    include: eventInclude,
   });
 
 /** One published event of either visibility, for a signed-in member. */
 export const findMemberEventBySlug = (db: Db, slug: string) =>
   db.event.findFirst({
     where: { slug, deletedAt: null, status: EVENT_STATUS_PUBLISHED },
-    include: { price_tiers: { orderBy: [{ display_order: 'asc' }, { starts_on: 'asc' }] } },
+    include: eventInclude,
   });

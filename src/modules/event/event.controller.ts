@@ -258,6 +258,19 @@ export const registerForEvent = handler(async (req, res) => {
 const statusList = (raw: unknown): number[] | undefined =>
   typeof raw === 'string' && raw.length > 0 ? raw.split(',').map(Number) : undefined;
 
+/**
+ * A search term, or nothing.
+ *
+ * Trimmed, because a box the user has cleared to whitespace means "no filter",
+ * and `%   %` matches nothing at all — an empty list that reads as a broken
+ * screen rather than a cleared one.
+ */
+const searchTerm = (raw: unknown): string | undefined => {
+  const value = typeof raw === 'string' ? raw.trim() : '';
+
+  return value.length > 0 ? value : undefined;
+};
+
 /** `GET /admin/event-registrations` — the booking list, and the approval queue. */
 export const listRegistrations = handler(async (req, res) => {
   const page = Number(req.query.page ?? 1);
@@ -268,6 +281,7 @@ export const listRegistrations = handler(async (req, res) => {
     limit,
     eventId: req.query.event_id ? BigInt(req.query.event_id as string) : undefined,
     statuses: statusList(req.query.status),
+    search: searchTerm(req.query.search),
   });
 
   handleApiResponse(res, {
@@ -522,6 +536,8 @@ export const listPaymentSubmissions = handler(async (req, res) => {
     page,
     limit,
     statuses: statusList(req.query.status),
+    methods: statusList(req.query.method),
+    search: searchTerm(req.query.search),
   });
 
   handleApiResponse(res, {

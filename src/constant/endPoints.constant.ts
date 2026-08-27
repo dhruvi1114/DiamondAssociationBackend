@@ -37,6 +37,7 @@ export const END_POINTS = {
   REGISTRATION_CONSENT: '/registration-consent',
   // M5 — registration masters
   COMPANY_TYPES: '/company-types',
+  EVENT_TYPES: '/event-types',
   COUNTRIES: '/countries',
   STATES: '/states',
   CITIES: '/cities',

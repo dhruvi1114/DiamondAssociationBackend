@@ -156,31 +156,48 @@ eventPublicRouter.post(
   controller.submitGuestPayment,
 );
 
-/** `/api/v1/events` — the member's event list (C-24). */
+/**
+ * `/api/v1/events` — the member's event list (C-24).
+ *
+ * Mounted ON `/events`, and its paths are relative to that — NOT mounted on
+ * `/api/v1` with `/events` repeated in every route.
+ *
+ * The distinction is the whole reason this comment exists. `router.use(path)`
+ * only checks that the request starts with `path`, so mounting this at
+ * `/api/v1` ran its `use(authenticate)` — a member-audience check — against
+ * every single request in the API. Everything registered after it in
+ * `routes/index.ts` was then answered by the member guard before it could reach
+ * its own router: an admin's token was rejected as the wrong audience on
+ * `/admin/applications`, and the login-free correction links under `/public`
+ * started demanding a session they are defined never to have.
+ *
+ * Keep the mount narrow. A path-less `use()` inside a router mounted at the top
+ * of a namespace is a guard on the whole namespace.
+ */
 export const eventMemberRouter = Router();
 
 eventMemberRouter.use(authenticate);
 
-eventMemberRouter.get(END_POINTS.EVENTS, controller.listMemberEvents);
+eventMemberRouter.get('/', controller.listMemberEvents);
 // Declared before `/:slug`, or "registrations" is read as an event slug.
-eventMemberRouter.get(`${END_POINTS.EVENTS}/registrations/mine`, controller.listMyBookings);
+eventMemberRouter.get('/registrations/mine', controller.listMyBookings);
 
-eventMemberRouter.get(`${END_POINTS.EVENTS}/:slug`, controller.getMemberEvent);
+eventMemberRouter.get('/:slug', controller.getMemberEvent);
 
 eventMemberRouter.post(
-  `${END_POINTS.EVENTS}/:slug/register`,
+  '/:slug/register',
   validateRequest({ body: registerAsMemberSchema }),
   controller.registerForEvent,
 );
 
 eventMemberRouter.post(
-  `${END_POINTS.EVENTS}/registrations/:id/cancel`,
+  '/registrations/:id/cancel',
   validateRequest({ params: idParamSchema }),
   controller.cancelOwnBooking,
 );
 
 eventMemberRouter.post(
-  `${END_POINTS.EVENTS}/registrations/:id/payment`,
+  '/registrations/:id/payment',
   validateRequest({ params: idParamSchema, body: submitPaymentSchema }),
   controller.submitPayment,
 );

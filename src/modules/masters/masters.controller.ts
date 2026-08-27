@@ -289,6 +289,47 @@ export const deleteCompanyType = handler(async (req, res) => {
   });
 });
 
+/* --- event types (M7) ------------------------------------------------------ */
+
+export const listEventTypes = regList(regService.listEventTypes);
+
+export const getEventType = handler(async (req, res) => {
+  handleApiResponse(res, {
+    responseType: RES_STATUS.GET,
+    data: serialise(await regService.getEventType(BigInt(req.params.id as string))),
+  });
+});
+
+export const createEventType = handler(async (req, res) => {
+  handleApiResponse(res, {
+    responseType: RES_STATUS.CREATE,
+    messageKey: 'masters.eventTypeCreated',
+    data: serialise(await regService.createEventType(req.body as never, actor(req))),
+  });
+});
+
+export const updateEventType = handler(async (req, res) => {
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'masters.eventTypeUpdated',
+    data: serialise(
+      await regService.updateEventType(
+        BigInt(req.params.id as string),
+        req.body as never,
+        actor(req),
+      ),
+    ),
+  });
+});
+
+export const deleteEventType = handler(async (req, res) => {
+  await regService.deleteEventType(BigInt(req.params.id as string), actor(req));
+  handleApiResponse(res, {
+    responseType: RES_STATUS.DELETE,
+    messageKey: 'masters.eventTypeDeleted',
+  });
+});
+
 export const getCountry = handler(async (req, res) => {
   handleApiResponse(res, {
     responseType: RES_STATUS.GET,

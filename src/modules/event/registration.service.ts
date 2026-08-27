@@ -607,6 +607,7 @@ export const rejectRegistration = async (
 export const listRegistrations = async (query: {
   eventId?: bigint;
   statuses?: number[];
+  search?: string | undefined;
   page: number;
   limit: number;
 }) => {
