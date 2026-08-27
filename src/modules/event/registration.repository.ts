@@ -226,6 +226,43 @@ export interface RegistrationDetailRow {
   /** The member login's own address, shown beside the booking's when they differ. */
   account_email: string | null;
   account_phone: string | null;
+  /*
+    The company's own record, as it stands TODAY — deliberately not the frozen
+    billing snapshot beside it. Those two answer different questions: the
+    snapshot says what the invoice was raised against, this says who the
+    association is dealing with now. On a guest booking every one of these is
+    null; a guest has no company record to read.
+  */
+  company_legal_name: string | null;
+  company_status: string | null;
+  company_type: string | null;
+  company_category: string | null;
+  company_gstin_holder: boolean | null;
+  company_landline: string | null;
+  company_website: string | null;
+  company_about: string | null;
+  company_gst_number: string | null;
+  company_pan_number: string | null;
+  company_iec_code: string | null;
+  company_trade_license_no: string | null;
+  company_consent_accepted_at: Date | null;
+  company_joined_on: Date | null;
+  company_address: string | null;
+  company_state: string | null;
+  company_country: string | null;
+  /*
+    The guest's own details, for a booking with no company behind it. Everything
+    a guest is, they typed: there is no account and no record elsewhere, so these
+    are read instead of the company block rather than alongside it.
+  */
+  guest_full_name: string | null;
+  guest_designation: string | null;
+  guest_company_name: string | null;
+  guest_gst_number: string | null;
+  guest_pan_number: string | null;
+  guest_state: string | null;
+  guest_pincode: string | null;
+  guest_country: string | null;
   city: string | null;
   tier_name: string | null;
   billing_company_name: string | null;
@@ -250,6 +287,9 @@ export interface RegistrationDetailRow {
   invoice_number: string | null;
   invoice_status: string | null;
   invoice_total: Prisma.Decimal | null;
+  /** What has actually been received against it, and what is still owed. */
+  invoice_amount_paid: Prisma.Decimal | null;
+  invoice_balance_due: Prisma.Decimal | null;
   invoice_due_date: Date | null;
 }
 
@@ -280,6 +320,31 @@ export const findRegistrationDetail = async (
            -- rather than by opening the member record to compare.
            u."email" AS account_email,
            u."phone" AS account_phone,
+           m."legal_name" AS company_legal_name,
+           m."status"::text AS company_status,
+           ct."name" AS company_type,
+           cat."names" AS company_category,
+           m."gstin_holder" AS company_gstin_holder,
+           m."landline" AS company_landline,
+           m."website" AS company_website,
+           m."about" AS company_about,
+           m."gst_number" AS company_gst_number,
+           m."pan_number" AS company_pan_number,
+           m."iec_code" AS company_iec_code,
+           m."trade_license_no" AS company_trade_license_no,
+           m."consent_accepted_at" AS company_consent_accepted_at,
+           m."joined_on" AS company_joined_on,
+           addr."full_address" AS company_address,
+           addr."state" AS company_state,
+           addr."country" AS company_country,
+           g."full_name" AS guest_full_name,
+           g."designation" AS guest_designation,
+           g."company_name" AS guest_company_name,
+           g."gst_number" AS guest_gst_number,
+           g."pan_number" AS guest_pan_number,
+           g."state" AS guest_state,
+           g."pincode" AS guest_pincode,
+           g."country" AS guest_country,
            COALESCE(addr."city", g."city") AS city,
            t."name" AS tier_name,
            r."billing_company_name", r."gst_number",
@@ -295,7 +360,14 @@ export const findRegistrationDetail = async (
            CASE WHEN r."status" = ${REGISTRATION_STATUS.REJECTED} THEN rej."full_name" END AS rejected_by,
            r."cancelled_at", r."cancelled_by",
            r."invoice_id", i."invoice_number", i."status" AS invoice_status,
-           i."total_amount" AS invoice_total, i."due_date" AS invoice_due_date
+           i."total_amount" AS invoice_total,
+           -- The invoice's own running totals, not a sum over the claims. A
+           -- claim is an assertion until somebody checks it against the bank;
+           -- these two move only when one is verified, which is what makes them
+           -- the figures worth showing as money.
+           i."amount_paid" AS invoice_amount_paid,
+           i."balance_due" AS invoice_balance_due,
+           i."due_date" AS invoice_due_date
       FROM "EventRegistrations" r
       JOIN "Events" e ON e."id" = r."event_id"
       LEFT JOIN "Members" m ON m."id" = r."member_id"
@@ -305,8 +377,26 @@ export const findRegistrationDetail = async (
       LEFT JOIN "EventPriceTiers" t ON t."id" = r."price_tier_id"
       LEFT JOIN "AdminUsers" app ON app."id" = r."approved_by_admin_id"
       LEFT JOIN "AdminUsers" rej ON rej."id" = r."updated_by_admin_id"
+      LEFT JOIN "CompanyTypes" ct ON ct."id" = m."company_type_id"
+      /*
+        A member may hold several classes, so they are joined into one string
+        here rather than returned as rows — the alternative multiplies the whole
+        booking out across one row per category.
+      */
       LEFT JOIN LATERAL (
-        SELECT a."city"
+        SELECT string_agg(mc2."name", ', ' ORDER BY mc2."name") AS names
+          FROM "MemberCategories" mc
+          JOIN "MembershipCategories" mc2 ON mc2."id" = mc."category_id"
+         WHERE mc."member_id" = m."id"
+      ) cat ON TRUE
+      -- LATERAL so the address comes off ONE row rather than whichever the
+      -- planner reached first — same reason the member list does it this way.
+      LEFT JOIN LATERAL (
+        SELECT a."city", a."state", a."country",
+               concat_ws(', ', NULLIF(a."line1", ''), NULLIF(a."line2", ''),
+                               NULLIF(a."city", ''), NULLIF(a."state", ''),
+                               NULLIF(a."country", ''), NULLIF(a."pincode", '')
+               ) AS full_address
           FROM "MemberAddresses" a
          WHERE a."member_id" = m."id" AND a."deletedAt" IS NULL
          ORDER BY a."is_primary" DESC, a."id" ASC

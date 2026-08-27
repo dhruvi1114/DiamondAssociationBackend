@@ -688,6 +688,8 @@ export const getRegistration = async (id: bigint) => {
     tax_amount: row.tax_amount.toFixed(2),
     total_amount: row.total_amount.toFixed(2),
     invoice_total: row.invoice_total?.toFixed(2) ?? null,
+    invoice_amount_paid: row.invoice_amount_paid?.toFixed(2) ?? null,
+    invoice_balance_due: row.invoice_balance_due?.toFixed(2) ?? null,
     attendees: attendees.map((person) => ({
       ...person,
       unit_price: person.unit_price.toFixed(2),
