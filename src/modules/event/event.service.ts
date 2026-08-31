@@ -411,12 +411,38 @@ const registrationState = (
 const bannerUrl = (slug: string, path: string | null): string | null =>
   path ? `${API_V1}${END_POINTS.PUBLIC}${END_POINTS.EVENTS}/${slug}/banner` : null;
 
+/** How much of the description a card carries before it stops being a card. */
+const EXCERPT_MAX = 180;
+
+/**
+ * A card-sized opening of the description.
+ *
+ * Cut on a word, never mid-word, and only when there is something left to cut:
+ * a 182-character description ending in "…" claims there is more to read when
+ * there are two characters of it. Whitespace is collapsed first, because the
+ * field is a textarea and the newlines an admin typed are not layout a card
+ * can honour.
+ */
+export const excerpt = (text: string | null): string | null => {
+  if (!text) return null;
+
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (!flat) return null;
+  if (flat.length <= EXCERPT_MAX) return flat;
+
+  const cut = flat.slice(0, EXCERPT_MAX);
+  const lastSpace = cut.lastIndexOf(' ');
+
+  return `${(lastSpace > 0 ? cut.slice(0, lastSpace) : cut).replace(/[,;:.\s]+$/, '')}…`;
+};
+
 const browseRow = (row: repo.BrowseEventRow) => ({
   id: row.id.toString(),
   slug: row.slug,
   title: row.title,
   banner_url: bannerUrl(row.slug, row.banner_path),
   banner_alt: row.banner_alt,
+  excerpt: excerpt(row.description),
   event_type: row.event_type,
   start_at: row.start_at,
   end_at: row.end_at,

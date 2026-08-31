@@ -131,6 +131,8 @@ export interface BrowseEventRow {
   /** Storage key. The service turns it into the URL the browser asks for. */
   banner_path: string | null;
   banner_alt: string | null;
+  /** Full text. The service cuts the card-sized excerpt; see `excerpt` there. */
+  description: string | null;
   /** The type's NAME, resolved here — an id on a card tells a reader nothing. */
   event_type: string | null;
   start_at: Date;
@@ -202,6 +204,7 @@ const browseEvents = (
 
   return prisma.$queryRaw<BrowseEventRow[]>(Prisma.sql`
     SELECT e."id", e."slug", e."title", e."banner_path", e."banner_alt",
+           e."description",
            et."name" AS event_type,
            e."start_at", e."end_at", e."venue_name", e."city",
            e."visibility", e."capacity", e."seats_taken", e."registration_closes_at",
