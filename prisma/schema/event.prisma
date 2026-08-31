@@ -71,6 +71,11 @@ model Event {
   /// Storage key of the banner image, through `@helpers/storage`.
   banner_path String? @db.Text
 
+  /// Alt text for the banner. Carried because the poster is the one image on an
+  /// event card a screen reader cannot skip past, and because it is what a
+  /// search engine reads the picture as.
+  banner_alt String? @db.VarChar(200)
+
   /// Event start (UTC).
   start_at DateTime @db.Timestamptz(6)
 

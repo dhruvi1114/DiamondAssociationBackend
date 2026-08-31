@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { END_POINTS } from '@constant';
 import { authenticate, authenticateAdmin, authorize, validateRequest } from '@middleware';
 import * as controller from '@modules/event/event.controller';
+import { BANNER_MAX_BYTES } from '@modules/event/event.media.service';
 import {
   listRegistrationsSchema,
   registerAsGuestSchema,
@@ -11,12 +13,23 @@ import {
   submitPaymentSchema,
 } from '@modules/event/registration.types';
 import {
+  browseEventsSchema,
   cancelEventSchema,
   createEventSchema,
   listEventsSchema,
   updateEventSchema,
 } from '@modules/event/event.types';
 import { idParamSchema } from '@modules/member/member.types';
+
+/**
+ * In memory, like every other upload here: the bytes are sniffed before anything
+ * touches the filesystem. This limit only stops a large body being buffered at
+ * all; the media service applies the same ceiling again against the real size.
+ */
+const uploadBanner = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: BANNER_MAX_BYTES, files: 1 },
+});
 
 /** `/api/v1/admin/events` — staff-facing event management (A-21…A-22). */
 export const eventAdminRouter = Router();
@@ -49,6 +62,33 @@ eventAdminRouter.patch(
   authorize('event.manage'),
   validateRequest({ params: idParamSchema, body: updateEventSchema }),
   controller.updateEvent,
+);
+
+/*
+  The poster. Its own upload rather than a field on the event form: the stored
+  value is a key the server decides, so there is nothing for the form to hold in
+  its draft — the upload IS the save.
+*/
+eventAdminRouter.get(
+  `${END_POINTS.EVENTS}/:id/banner`,
+  authorize('event.view'),
+  validateRequest({ params: idParamSchema }),
+  controller.serveAdminBanner,
+);
+
+eventAdminRouter.post(
+  `${END_POINTS.EVENTS}/:id/banner`,
+  authorize('event.manage'),
+  validateRequest({ params: idParamSchema }),
+  uploadBanner.single('file'),
+  controller.uploadBanner,
+);
+
+eventAdminRouter.delete(
+  `${END_POINTS.EVENTS}/:id/banner`,
+  authorize('event.manage'),
+  validateRequest({ params: idParamSchema }),
+  controller.removeBanner,
 );
 
 eventAdminRouter.post(
@@ -145,8 +185,18 @@ eventAdminRouter.post(
 /** `/api/v1/public/events` — the public site. No session. */
 export const eventPublicRouter = Router();
 
-eventPublicRouter.get(END_POINTS.EVENTS, controller.listPublicEvents);
+/*
+  Route order matters: `/events/filters` is declared before `/events/:slug`, or
+  the slug pattern swallows it.
+*/
+eventPublicRouter.get(`${END_POINTS.EVENTS}/filters`, controller.eventFacets);
+eventPublicRouter.get(
+  END_POINTS.EVENTS,
+  validateRequest({ query: browseEventsSchema }),
+  controller.listPublicEvents,
+);
 eventPublicRouter.get(`${END_POINTS.EVENTS}/:slug`, controller.getPublicEvent);
+eventPublicRouter.get(`${END_POINTS.EVENTS}/:slug/banner`, controller.serveBanner);
 
 eventPublicRouter.post(
   `${END_POINTS.EVENTS}/:slug/register`,
@@ -185,11 +235,17 @@ export const eventMemberRouter = Router();
 
 eventMemberRouter.use(authenticate);
 
-eventMemberRouter.get('/', controller.listMemberEvents);
+eventMemberRouter.get('/filters', controller.eventFacets);
+eventMemberRouter.get(
+  '/',
+  validateRequest({ query: browseEventsSchema }),
+  controller.listMemberEvents,
+);
 // Declared before `/:slug`, or "registrations" is read as an event slug.
 eventMemberRouter.get('/registrations/mine', controller.listMyBookings);
 
 eventMemberRouter.get('/:slug', controller.getMemberEvent);
+eventMemberRouter.get('/:slug/banner', controller.serveBanner);
 
 eventMemberRouter.post(
   '/:slug/register',

@@ -60,6 +60,8 @@ const eventShape = z.object({
     .optional()
     .default(null),
   description: z.string().trim().max(20_000).optional(),
+  /* The poster itself uploads separately; only its description is form data. */
+  banner_alt: z.string().trim().max(200).nullable().optional().default(null),
   start_at: z.coerce.date(),
   end_at: z.coerce.date(),
   venue_name: z.string().trim().max(200).optional(),
@@ -150,3 +152,40 @@ export const cancelEventSchema = z.object({
 });
 
 export type CancelEventInput = z.infer<typeof cancelEventSchema>;
+
+/**
+ * A comma-separated list on the wire.
+ *
+ * `?type=1,2` rather than repeated keys: it is what a person can read in an
+ * address bar and share, and it is the shape the other filtered lists in this
+ * API already use.
+ */
+const csv = z
+  .string()
+  .trim()
+  .transform((value) =>
+    value
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean),
+  );
+
+/** Query for the public and member events listing. */
+export const browseEventsSchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(60).default(24),
+  /** `EventTypes` ids. */
+  type: csv.pipe(z.array(z.string().regex(/^\d+$/, 'validation.invalidId'))).optional(),
+  city: csv.optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  price: z.enum(['free', 'paid']).optional(),
+  /*
+    "Only what I can still book." A separate flag rather than a price value,
+    because it answers a different question — one is what it costs, the other is
+    whether the door is still open.
+  */
+  open: z.coerce.boolean().optional(),
+});
+
+export type BrowseEventsQuery = z.infer<typeof browseEventsSchema>;

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import { API_V1, END_POINTS } from '@constant';
 import { ACTOR_TYPES, AUDIT_ACTIONS } from '@constant/audit.constant';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { prisma } from '@db/prisma';
@@ -78,6 +79,7 @@ const eventColumns = (input: CreateEventInput) => ({
   */
   event_type_id: input.event_type_id ? BigInt(input.event_type_id) : null,
   description: input.description ?? null,
+  banner_alt: input.banner_alt ?? null,
   start_at: input.start_at,
   end_at: input.end_at,
   venue_name: input.venue_name ?? null,
@@ -399,10 +401,23 @@ const registrationState = (
   return { open: true, reason: null };
 };
 
+/**
+ * Where an event's poster is fetched from.
+ *
+ * Keyed by slug, and the endpoint behind it re-checks the event's status and
+ * visibility — the URL is a request, not a grant. Null when there is no poster,
+ * so the card draws its own placeholder rather than a broken image.
+ */
+const bannerUrl = (slug: string, path: string | null): string | null =>
+  path ? `${API_V1}${END_POINTS.PUBLIC}${END_POINTS.EVENTS}/${slug}/banner` : null;
+
 const browseRow = (row: repo.BrowseEventRow) => ({
   id: row.id.toString(),
   slug: row.slug,
   title: row.title,
+  banner_url: bannerUrl(row.slug, row.banner_path),
+  banner_alt: row.banner_alt,
+  event_type: row.event_type,
   start_at: row.start_at,
   end_at: row.end_at,
   venue_name: row.venue_name,
@@ -420,13 +435,21 @@ const paged = (rows: repo.BrowseEventRow[]) => ({
   total: rows.length > 0 ? Number(rows[0].total) : 0,
 });
 
+interface BrowseQuery extends repo.BrowseFilters {
+  page: number;
+  limit: number;
+}
+
 /** Published public events, for a visitor with no session. */
-export const listPublicEvents = async (query: { page: number; limit: number }) =>
-  paged(await repo.listPublicEvents(query.page, query.limit));
+export const listPublicEvents = async ({ page, limit, ...filters }: BrowseQuery) =>
+  paged(await repo.listPublicEvents(page, limit, filters));
 
 /** Published events of both kinds, for a signed-in member. */
-export const listMemberEvents = async (query: { page: number; limit: number }) =>
-  paged(await repo.listMemberEvents(query.page, query.limit));
+export const listMemberEvents = async ({ page, limit, ...filters }: BrowseQuery) =>
+  paged(await repo.listMemberEvents(page, limit, filters));
+
+/** The filter rail's options, counted against what this audience can see. */
+export const browseFacets = (publicOnly: boolean) => repo.browseFacets(publicOnly);
 
 /** The shared detail shape: the whole tier table plus what applies today. */
 const eventDetail = (
@@ -445,7 +468,12 @@ const eventDetail = (
     event_type_id: event.event_type_id?.toString() ?? null,
     event_type: event.event_type?.name ?? null,
     description: event.description,
-    banner_path: event.banner_path,
+    /*
+      The URL, not the storage key. A key is a private detail of where the file
+      lives; the reader needs an address they can put in an `<img src>`.
+    */
+    banner_url: bannerUrl(event.slug, event.banner_path),
+    banner_alt: event.banner_alt,
     start_at: event.start_at,
     end_at: event.end_at,
     venue_name: event.venue_name,

@@ -213,7 +213,13 @@
     "bookingLinkInvalid": "That booking link is no longer valid",
     "cancelPartiallyFailed": "Some bookings could not be cancelled. The event is unchanged — try again, and tell support if it keeps happening",
     "cannotCancelBooking": "This booking can no longer be cancelled",
-    "bookingCancelled": "Booking cancelled"
+    "bookingCancelled": "Booking cancelled",
+    "bannerUpdated": "Poster updated",
+    "bannerRemoved": "Poster removed",
+    "bannerRequired": "Choose an image to upload",
+    "bannerTooLarge": "That image is too large",
+    "bannerUnsupportedType": "That image type is not accepted",
+    "bannerNotFound": "That poster is no longer available"
   },
   "news": {
     "notFound": "That news article no longer exists",

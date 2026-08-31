@@ -2,6 +2,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { RES_STATUS } from '@constant/message.constant';
 import * as service from '@modules/event/event.service';
+import * as media from '@modules/event/event.media.service';
 import * as eventPayment from '@modules/event/payment.service';
 import * as registration from '@modules/event/registration.service';
 import { AppError } from '@utils/appError';
@@ -65,6 +66,142 @@ const serialise = (value: unknown): unknown =>
       return raw;
     }),
   );
+
+/**
+ * Translate the query string into the repository's filter shape.
+ *
+ * Ids become bigints and dates stay dates here, at the edge, so nothing further
+ * in has to know that the wire carries strings.
+ */
+const browseFilters = (req: Request) => {
+  const query = req.query as unknown as {
+    page: number;
+    limit: number;
+    type?: string[];
+    city?: string[];
+    from?: Date;
+    to?: Date;
+    price?: 'free' | 'paid';
+    open?: boolean;
+  };
+
+  return {
+    page: query.page,
+    limit: query.limit,
+    typeIds: query.type?.map((id) => BigInt(id)),
+    cities: query.city,
+    from: query.from,
+    to: query.to,
+    price: query.price,
+    openOnly: query.open,
+  };
+};
+
+/** `GET /public/events/filters` · `GET /events/filters` — what the rail offers. */
+export const eventFacets = handler(async (req, res) => {
+  // No session on the public router, so `req.actor` is the whole difference:
+  // a member's facets count the members-only events they can also see.
+  const facets = await service.browseFacets(req.actor?.id === undefined);
+
+  handleApiResponse(res, { responseType: RES_STATUS.GET, data: serialise(facets) });
+});
+
+/**
+ * `GET /public/events/:slug/banner` · `GET /events/:slug/banner` — the poster.
+ *
+ * The event is read through the same visibility-aware reader the detail page
+ * uses, so a members-only poster answers 404 to a stranger rather than 403 —
+ * which would confirm the event exists.
+ */
+export const serveBanner = handler(async (req, res) => {
+  const slug = req.params.slug as string;
+  const event =
+    req.actor?.id === undefined
+      ? await service.getPublicEvent(slug)
+      : await service.getMemberEvent(slug, req.actor.id);
+
+  if (!event?.banner_url) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'event.bannerNotFound' });
+  }
+
+  const row = await prisma.event.findFirst({
+    where: { slug, deletedAt: null },
+    select: { banner_path: true },
+  });
+
+  if (!row?.banner_path) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'event.bannerNotFound' });
+  }
+
+  const file = await media.openBanner(row.banner_path);
+
+  /*
+    `no-cache` is "keep it, but ask every time", not "do not store": the poster
+    is a mutable resource at a fixed URL, and an event switched to members-only
+    must stop being served from a stranger's disk cache. The ETag makes the
+    usual answer a 304 with no body.
+  */
+  const etag = `"${row.banner_path}"`;
+
+  res.setHeader('ETag', etag);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Content-Type', file.mime);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  if (req.headers['if-none-match'] === etag) {
+    res.status(304).end();
+
+    return;
+  }
+
+  res.setHeader('Content-Disposition', 'inline');
+  file.stream.pipe(res);
+});
+
+/** `GET /admin/events/:id/banner` — the staff copy, drafts included. */
+export const serveAdminBanner = handler(async (req, res) => {
+  const row = await prisma.event.findFirst({
+    where: { id: BigInt(req.params.id as string), deletedAt: null },
+    select: { banner_path: true },
+  });
+
+  if (!row?.banner_path) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'event.bannerNotFound' });
+  }
+
+  const file = await media.openBanner(row.banner_path);
+
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Content-Type', file.mime);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', 'inline');
+  file.stream.pipe(res);
+});
+
+/** `POST /admin/events/:id/banner` */
+export const uploadBanner = handler(async (req, res) => {
+  if (!req.file) {
+    throw new AppError({
+      errorType: ERROR_TYPES.INVALID_REQUEST,
+      messageKey: 'event.bannerRequired',
+    });
+  }
+
+  await media.setBanner(
+    BigInt(req.params.id as string),
+    { buffer: req.file.buffer, originalname: req.file.originalname },
+    actor(req).id,
+  );
+
+  handleApiResponse(res, { responseType: RES_STATUS.UPDATE, messageKey: 'event.bannerUpdated' });
+});
+
+/** `DELETE /admin/events/:id/banner` */
+export const removeBanner = handler(async (req, res) => {
+  await media.clearBanner(BigInt(req.params.id as string), actor(req).id);
+
+  handleApiResponse(res, { responseType: RES_STATUS.DELETE, messageKey: 'event.bannerRemoved' });
+});
 
 /** `POST /admin/events` — create a draft. */
 export const createEvent = handler(async (req, res) => {
@@ -158,20 +295,15 @@ export const deleteEvent = handler(async (req, res) => {
 
 /* --- browsing -------------------------------------------------------------- */
 
-const pageQuery = (req: Request) => ({
-  page: Number(req.query.page ?? 1),
-  limit: Math.min(Number(req.query.limit ?? 20), 100),
-});
-
 /** `GET /public/events` — published public events. No session required. */
 export const listPublicEvents = handler(async (req, res) => {
-  const query = pageQuery(req);
+  const query = browseFilters(req);
   const { rows, total } = await service.listPublicEvents(query);
 
   handleApiResponse(res, {
     responseType: RES_STATUS.GET,
     data: serialise({ rows }),
-    pagination: { ...query, total },
+    pagination: { page: query.page, limit: query.limit, total },
   });
 });
 
@@ -194,13 +326,13 @@ export const getPublicEvent = handler(async (req, res) => {
 
 /** `GET /events` — published events of both kinds, for a signed-in member. */
 export const listMemberEvents = handler(async (req, res) => {
-  const query = pageQuery(req);
+  const query = browseFilters(req);
   const { rows, total } = await service.listMemberEvents(query);
 
   handleApiResponse(res, {
     responseType: RES_STATUS.GET,
     data: serialise({ rows }),
-    pagination: { ...query, total },
+    pagination: { page: query.page, limit: query.limit, total },
   });
 });
 
