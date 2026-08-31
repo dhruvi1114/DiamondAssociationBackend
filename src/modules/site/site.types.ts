@@ -14,16 +14,23 @@ export interface SiteHubCountry {
  * association supplies, and it lives in the customer app's constants rather
  * than pretending to be data (spec §2, decision D-3).
  */
-/** One company in the homepage's member wall. */
-export interface SiteFeaturedMember {
-  name: string;
-  /** Where the logo loads from, or null when the member has not uploaded one. */
-  logo_url: string | null;
-}
+/*
+  DISABLED 2026-08-31 — decision D1 (docs/client-decisions.md): the member
+  directory is members-only, so no member company name or logo may reach an
+  anonymous caller. This code published both on the public homepage. It was
+  written before that decision existed and is commented rather than deleted, so
+  it can be restored whole if the association ever chooses a public member wall
+  — which would be a new decision with its own consent, not a revival of this.
+  See docs/specs/2026-08-31-member-directory.md §11.
+*/
+// export interface SiteFeaturedMember {
+//   name: string;
+//   logo_url: string | null;
+// }
 
 export interface SiteStats {
   members: number;
   countries: number;
-  featured_members: SiteFeaturedMember[];
+  // featured_members: SiteFeaturedMember[];  // DISABLED 2026-08-31 — D1
   hub_countries: SiteHubCountry[];
 }

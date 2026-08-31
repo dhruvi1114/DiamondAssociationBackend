@@ -46,7 +46,18 @@ const notFound = (): AppError =>
   new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'member.logoNotFound' });
 
 /** Where a browser fetches this member's logo. The endpoint re-checks the rules. */
-export const logoUrl = (memberId: bigint): string => `/api/v1/public/members/${memberId}/logo`;
+/**
+ * Where a member's own logo loads from.
+ *
+ * Authenticated, not public. The public variant was disabled on 2026-08-31 by
+ * decision D1: a guessable public logo URL discloses that a named company is a
+ * member of this association, which the members-only directory refuses to say.
+ *
+ * `/me/` rather than `/:id/` on purpose — this URL is only ever handed to the
+ * member it belongs to, so it carries no id for anyone to iterate. Another
+ * member's logo is served by the directory, behind the directory's own gate.
+ */
+export const logoUrl = (): string => `/api/v1/members/me/logo`;
 
 /**
  * The Content-Type for a stored logo, from the key's extension.
@@ -143,7 +154,7 @@ export const putOwnLogo = async (memberId: bigint, file: UploadedLogo, actor: Ac
     await removeFile(existing.logo_path);
   }
 
-  return { logo_url: updated.logo_path ? logoUrl(memberId) : null };
+  return { logo_url: updated.logo_path ? logoUrl() : null };
 };
 
 export const clearOwnLogo = async (memberId: bigint, actor: Actor) => {
@@ -185,6 +196,33 @@ export const clearOwnLogo = async (memberId: bigint, actor: Actor) => {
  * exactly like one that never existed, because a 403 would confirm they are a
  * member.
  */
+/**
+ * The caller's own logo.
+ *
+ * Deliberately no `status` or `directory_visible` condition: a member must be
+ * able to see the mark they uploaded whatever their membership state, and a
+ * company that has opted out of the directory has not opted out of its own
+ * profile page.
+ */
+export const openOwnLogo = async (memberId: bigint) => {
+  const member = await prisma.member.findFirst({
+    where: { id: memberId, deletedAt: null, logo_path: { not: null } },
+    select: { logo_path: true },
+  });
+
+  if (!member?.logo_path) throw notFound();
+
+  const mime = logoMimeForKey(member.logo_path);
+
+  if (!mime) throw notFound();
+
+  const store = getStorage();
+
+  if (!(await store.exists(member.logo_path))) throw notFound();
+
+  return { stream: await store.getStream(member.logo_path), mime, key: member.logo_path };
+};
+
 export const openPublicLogo = async (memberId: bigint) => {
   const member = await prisma.member.findFirst({
     where: {

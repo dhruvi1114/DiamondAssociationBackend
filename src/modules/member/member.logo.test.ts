@@ -61,7 +61,20 @@ describe('member logo upload', () => {
   it('accepts a PNG and answers with a URL rather than a storage key', async () => {
     const result = await putOwnLogo(7n, { buffer: png(), originalname: 'logo.png' }, ACTOR);
 
-    expect(result).toEqual({ logo_url: '/api/v1/public/members/7/logo' });
+    expect(result).toEqual({ logo_url: '/api/v1/members/me/logo' });
+  });
+
+  /*
+    The URL is authenticated and carries no id. The public `/public/members/:id`
+    variant was disabled on 2026-08-31 (decision D1): a guessable public logo URL
+    discloses that a named company is a member, which the members-only directory
+    refuses to say. `/me/` also gives an iterating caller nothing to iterate.
+  */
+  it('answers with an authenticated URL that names no company', async () => {
+    const result = await putOwnLogo(7n, { buffer: png(), originalname: 'logo.png' }, ACTOR);
+
+    expect(result.logo_url).not.toContain('/public/');
+    expect(result.logo_url).not.toContain('7');
   });
 
   /**

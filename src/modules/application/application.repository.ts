@@ -269,6 +269,12 @@ export const listApplications = (
              LIMIT 1) AS rejected_by,
            addr.city,
            addr.state,
+           -- The COMPANY's lifecycle state, not the application's: the status
+           -- selected above is a.status. The member-company scope shows both,
+           -- and they answer different questions -- whether the paperwork was
+           -- approved, and whether the firm is a paid member today.
+           mem.status AS member_status,
+           mem.directory_visible,
            count(*) OVER () AS total
       FROM "MembershipApplications" a
       JOIN "MembershipCategories" c ON c.id = a.category_id

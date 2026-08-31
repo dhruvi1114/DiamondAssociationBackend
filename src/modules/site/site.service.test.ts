@@ -45,39 +45,51 @@ describe('getSiteStats', () => {
     });
   });
 
-  it('publishes names only for members who consented to the directory', async () => {
-    memberFindMany.mockResolvedValue([{ id: 9n, company_name: 'Acme Diamonds', logo_path: null }]);
-
-    const stats = await getSiteStats();
-
-    expect(stats.featured_members).toEqual([{ name: 'Acme Diamonds', logo_url: null }]);
-    expect(memberFindMany).toHaveBeenCalledWith({
-      where: {
-        deletedAt: null,
-        status: 'ACTIVE',
-        directory_visible: true,
-      },
-      select: { id: true, company_name: true, logo_path: true },
-      orderBy: [{ logo_path: { sort: 'asc', nulls: 'last' } }, { company_name: 'asc' }],
-      take: 24,
-    });
-  });
-
-  /*
-    The URL, not the storage key. A key is internal layout, and the endpoint
-    behind this URL re-checks that the member is still listed anyway.
-  */
-  it('gives a member with a logo a URL a browser can load', async () => {
+  /**
+   * D1 (2026-08-31): the member directory is members-only, so the public
+   * homepage may state how many members there are and never who they are.
+   *
+   * This is the test that keeps the decision. The two tests it replaces —
+   * asserting the names and the logo URLs the homepage used to publish — are
+   * kept commented below, because the code they cover is commented rather than
+   * deleted and the pair must be restored together or not at all.
+   */
+  it('never names a member company, whatever the database holds', async () => {
+    memberCount.mockResolvedValue(512);
     memberFindMany.mockResolvedValue([
       { id: 42n, company_name: 'Acme Diamonds', logo_path: 'members/42/abc.png' },
     ]);
 
     const stats = await getSiteStats();
 
-    expect(stats.featured_members).toEqual([
-      { name: 'Acme Diamonds', logo_url: '/api/v1/public/members/42/logo' },
-    ]);
+    expect(stats.members).toBe(512);
+    expect(JSON.stringify(stats)).not.toContain('Acme Diamonds');
+    expect(JSON.stringify(stats)).not.toContain('logo');
+    expect(stats).not.toHaveProperty('featured_members');
+    // The name query is not merely filtered — it is never issued.
+    expect(memberFindMany).not.toHaveBeenCalled();
   });
+
+  /*
+    DISABLED 2026-08-31 — D1. Restore alongside `listFeaturedMembers` in
+    site.repository.ts if a public member wall is ever decided on its own terms.
+
+    it('publishes names only for members who consented to the directory', async () => {
+      memberFindMany.mockResolvedValue([{ id: 9n, company_name: 'Acme Diamonds', logo_path: null }]);
+      const stats = await getSiteStats();
+      expect(stats.featured_members).toEqual([{ name: 'Acme Diamonds', logo_url: null }]);
+    });
+
+    it('gives a member with a logo a URL a browser can load', async () => {
+      memberFindMany.mockResolvedValue([
+        { id: 42n, company_name: 'Acme Diamonds', logo_path: 'members/42/abc.png' },
+      ]);
+      const stats = await getSiteStats();
+      expect(stats.featured_members).toEqual([
+        { name: 'Acme Diamonds', logo_url: '/api/v1/public/members/42/logo' },
+      ]);
+    });
+  */
 
   it('counts distinct countries and names the busiest ones', async () => {
     addressGroupBy.mockResolvedValue([
@@ -104,7 +116,6 @@ describe('getSiteStats', () => {
     expect(stats).toEqual({
       members: 0,
       countries: 0,
-      featured_members: [],
       hub_countries: [],
     });
   });

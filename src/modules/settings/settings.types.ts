@@ -70,7 +70,9 @@ export const EDITABLE_SETTINGS: Record<string, z.ZodType<string>> = {
   // 0 means UNLIMITED here, not none — see `approval.engine.ts`. The bound is a
   // sanity cap, not a business rule.
   'application.max_resubmissions': wholeNumber(0, 20),
-  'directory.public_enabled': boolean,
+  // RETIRED 2026-08-31 (D1) — no public directory exists.
+  // 'directory.public_enabled': boolean,
+  'directory.enabled': boolean,
   'organisation.address': multiline(500),
   /*
     Uploaded, not typed. The value is a storage key, and a key an admin could

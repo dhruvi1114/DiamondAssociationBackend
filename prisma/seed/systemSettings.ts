@@ -210,14 +210,38 @@ const SETTINGS: SettingSeed[] = [
       'The application fee, in the fee currency, before tax. One amount for every category (user decision, 2026-08-21) — if it ever varies by category it belongs in FeeStructures, not here. Ignored while billing.charge_application_fee is false.',
     is_public: false,
   },
+  /*
+    RETIRED 2026-08-31. OQ-7 / D1 is answered: the member directory is
+    members-only, so there is no public directory for this switch to enable and
+    no code reads it. It is left here, commented, because an existing database
+    still holds the row — see the note in docs/specs/2026-08-31-member-directory.md.
+
+    Retired rather than repurposed: `directory.enabled` below means something
+    different (available to members at all), and quietly changing what a stored
+    key means is how a setting ends up doing the opposite of its label.
+
+    {
+      key: 'directory.public_enabled',
+      value: 'false',
+      value_type: SettingValueType.BOOLEAN,
+      group: 'directory',
+      description:
+        'Whether the member directory is visible to unauthenticated visitors. FALSE until OQ-7 is answered — defaulting a directory of member firms to public is not a decision this seed may make.',
+      is_public: true,
+    },
+  */
   {
-    key: 'directory.public_enabled',
-    value: 'false',
+    key: 'directory.enabled',
+    value: 'true',
     value_type: SettingValueType.BOOLEAN,
     group: 'directory',
     description:
-      'Whether the member directory is visible to unauthenticated visitors. FALSE until OQ-7 is answered — defaulting a directory of member firms to public is not a decision this seed may make.',
-    is_public: true,
+      'Whether the member directory is available to members at all. Off closes it for every member at once and shows them an explanatory screen; it does not change any member\'s own listing choice, which is theirs and returns when this is switched back on. Never makes anything public — the directory is members-only (decision D1).',
+    /*
+      NOT public. `is_public` rows are served unauthenticated, and whether this
+      association runs a directory is not a fact a stranger needs.
+    */
+    is_public: false,
   },
 ];
 

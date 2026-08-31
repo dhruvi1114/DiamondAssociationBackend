@@ -8,6 +8,7 @@ import {
   applicationPublicRouter,
   applicationSuperAdminRouter,
 } from '@modules/application/public.routes';
+import { directoryRouter } from '@modules/directory/directory.routes';
 import {
   eventAdminRouter,
   eventMemberRouter,
@@ -53,9 +54,13 @@ router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, brandingPublicRouter);
 // screen are named after. Read-only; the allow-list is the `is_public` column.
 router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, settingsPublicRouter);
 
-// The public homepage's member/country counts. No session, no member data.
+// The public homepage's member/country counts. No session, no member data —
+// aggregate figures only. The company-name wall this once fed was disabled on
+// 2026-08-31 by decision D1; a count discloses nothing about any one company.
 router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, sitePublicRouter);
-// The member's own company logo, for the homepage and the public directory.
+// The member's own company logo. The router is empty as of 2026-08-31 (D1): the
+// member directory is members-only, so no member logo is served unauthenticated.
+// The mount stays so restoring the route is a one-line uncomment in member.routes.ts.
 router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, memberPublicRouter);
 
 // M2 — membership catalogue. Admin writes are permission-gated per rbac.md §3;
@@ -81,6 +86,11 @@ router.use(`${END_POINTS.V1}${END_POINTS.EVENTS}`, eventMemberRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, newsAdminRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, newsPublicRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.NEWS}`, newsMemberRouter);
+
+// M9 — the member directory. Members-only by decision D1: one router, a member
+// token required, and the ACTIVE-membership check inside the module. There is
+// deliberately no public sibling — an anonymous caller has no endpoint here.
+router.use(`${END_POINTS.V1}${END_POINTS.DIRECTORY}`, directoryRouter);
 
 // M5 — invoice and receipt PDFs, both audiences.
 router.use(`${END_POINTS.V1}${END_POINTS.INVOICES}`, invoiceRouter);

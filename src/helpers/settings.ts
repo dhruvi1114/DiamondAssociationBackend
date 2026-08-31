@@ -116,6 +116,12 @@ export const SETTING_KEYS = {
    * three days late renewing is not an outsider.
    */
   MEMBERSHIP_GRACE_DAYS: 'membership.grace_days',
+  /**
+   * Whether the member directory is available at all. Off closes it for every
+   * member at once; it does not change any individual member's own listing
+   * choice, which is theirs and is restored when this is switched back on.
+   */
+  DIRECTORY_ENABLED: 'directory.enabled',
 } as const;
 
 /** The two values `billing.renewal_basis` may hold. */

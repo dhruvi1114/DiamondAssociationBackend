@@ -275,6 +275,8 @@
     "markedRead": "Marked as read"
   },
   "directory": {
+    "forbidden": "The member directory is available to active members.",
+    "badSlug": "That is not a member directory address",
     "notAvailable": "The member directory is not available right now",
     "memberHidden": "This member has chosen not to appear in the directory",
     "fetched": "Directory fetched successfully"

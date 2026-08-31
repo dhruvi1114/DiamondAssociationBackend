@@ -49,6 +49,8 @@ memberRouter.patch(
   controller.updateOwnProfile,
 );
 
+memberRouter.get('/me/logo', controller.serveOwnLogo);
+
 memberRouter.post('/me/logo', upload.single('file'), controller.uploadOwnLogo);
 
 memberRouter.delete('/me/logo', controller.deleteOwnLogo);
@@ -281,12 +283,21 @@ memberAdminRouter.patch(
 );
 
 /**
- * `/api/v1/public/members` — the one member-owned image a stranger may load.
+ * `/api/v1/public/members` — DISABLED 2026-08-31, decision D1.
  *
- * No `use(authenticate)` anywhere in this router, deliberately: it is read by
- * the marketing homepage, which has no session. Entitlement is not skipped, it
- * is moved into the query — see `openPublicLogo`.
+ * This served a member's company logo to anonymous callers, for the homepage
+ * member wall. D1 (docs/client-decisions.md) made the member directory
+ * members-only: no member company name or logo reaches an anonymous caller, and
+ * a guessable public logo URL also discloses *that* a given company is a member.
+ *
+ * The router is left exported and empty rather than removed, so the mount in
+ * `routes/index.ts` keeps compiling and the restore is one uncommenting away.
+ * The logo upload itself is untouched — members still upload logos, and the
+ * member directory serves them behind its own ACTIVE gate.
+ *
+ * See docs/specs/2026-08-31-member-directory.md §6.1.
  */
 export const memberPublicRouter = Router();
 
-memberPublicRouter.get(`${END_POINTS.MEMBERS}/:id/logo`, controller.serveMemberLogo);
+// DISABLED 2026-08-31 — D1.
+// memberPublicRouter.get(`${END_POINTS.MEMBERS}/:id/logo`, controller.serveMemberLogo);

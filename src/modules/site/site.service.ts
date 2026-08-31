@@ -1,5 +1,6 @@
 import { prisma } from '@db/prisma';
-import { logoUrl } from '@modules/member/member.logo.service';
+// DISABLED 2026-08-31 — D1: no member logo URL reaches an anonymous caller.
+// import { logoUrl } from '@modules/member/member.logo.service';
 import * as repo from '@modules/site/site.repository';
 import type { SiteStats } from '@modules/site/site.types';
 
@@ -24,9 +25,9 @@ export const __resetSiteStatsCache = (): void => {
 };
 
 const load = async (): Promise<SiteStats> => {
-  const [members, featured, groups] = await Promise.all([
+  const [members, groups] = await Promise.all([
     repo.countActiveMembers(prisma),
-    repo.listFeaturedMembers(prisma),
+    // DISABLED 2026-08-31 — D1: repo.listFeaturedMembers(prisma),
     repo.groupMembersByCountry(prisma),
   ]);
 
@@ -52,10 +53,12 @@ const load = async (): Promise<SiteStats> => {
   return {
     members,
     countries: ids.length,
-    featured_members: featured.map((row) => ({
-      name: row.company_name,
-      logo_url: row.logo_path ? logoUrl(row.id) : null,
-    })),
+    // DISABLED 2026-08-31 — D1: the member directory is members-only, so the
+    // public homepage may state a count but never name a company.
+    // featured_members: featured.map((row) => ({
+    //   name: row.company_name,
+    //   logo_url: row.logo_path ? logoUrl(row.id) : null,
+    // })),
     hub_countries,
   };
 };

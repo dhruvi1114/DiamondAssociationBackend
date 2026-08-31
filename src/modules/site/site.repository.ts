@@ -11,30 +11,31 @@ import type { Db } from '@db/prisma';
 
 const ACTIVE_MEMBER = { deletedAt: null, status: 'ACTIVE' } as const;
 
-/** How many companies the marquee is given. It shows far fewer at a time. */
-export const MEMBER_NAME_LIMIT = 24;
+/*
+  DISABLED 2026-08-31 — decision D1 (docs/client-decisions.md): the member
+  directory is members-only, so no member company name or logo may reach an
+  anonymous caller. This code published both on the public homepage. It was
+  written before that decision existed and is commented rather than deleted, so
+  it can be restored whole if the association ever chooses a public member wall
+  — which would be a new decision with its own consent, not a revival of this.
+  See docs/specs/2026-08-31-member-directory.md §11.
+*/
+// /** How many companies the marquee is given. It shows far fewer at a time. */
+// export const MEMBER_NAME_LIMIT = 24;
 
 /** How many countries the map plots. Beyond a dozen the dots stop reading. */
 export const HUB_COUNTRY_LIMIT = 12;
 
 export const countActiveMembers = (db: Db) => db.member.count({ where: { ...ACTIVE_MEMBER } });
 
-/**
- * Names for the marquee — and only from members who consented to appear.
- * `directory_visible` is the member's own choice; publishing a name against it
- * on the homepage would be the same disclosure the directory refuses to make.
- */
-export const listFeaturedMembers = (db: Db) =>
-  db.member.findMany({
-    where: { ...ACTIVE_MEMBER, directory_visible: true },
-    select: { id: true, company_name: true, logo_path: true },
-    /*
-      Members with a logo first. The wall is a row of marks, and a company that
-      has uploaded one earns the place ahead of a company rendered as text.
-    */
-    orderBy: [{ logo_path: { sort: 'asc', nulls: 'last' } }, { company_name: 'asc' }],
-    take: MEMBER_NAME_LIMIT,
-  });
+// DISABLED 2026-08-31 — D1, see the note above.
+// export const listFeaturedMembers = (db: Db) =>
+//   db.member.findMany({
+//     where: { ...ACTIVE_MEMBER, directory_visible: true },
+//     select: { id: true, company_name: true, logo_path: true },
+//     orderBy: [{ logo_path: { sort: 'asc', nulls: 'last' } }, { company_name: 'asc' }],
+//     take: MEMBER_NAME_LIMIT,
+//   });
 
 /**
  * Members per country, busiest first.

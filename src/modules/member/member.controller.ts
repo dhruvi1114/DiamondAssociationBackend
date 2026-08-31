@@ -76,7 +76,7 @@ const ownMember = async (req: Request) => {
 const withLogoUrl = (record: { id?: bigint; logo_path?: string | null }): unknown => {
   const base = serialise(record) as Record<string, unknown>;
 
-  base.logo_url = record.logo_path && record.id ? logo.logoUrl(record.id) : null;
+  base.logo_url = record.logo_path && record.id ? logo.logoUrl() : null;
 
   return base;
 };
@@ -517,6 +517,26 @@ export const deleteOwnLogo = handler(async (req, res) => {
  * choice. A member who fails any of them answers 404, identically to an id that
  * was never issued.
  */
+/**
+ * The caller's own logo, authenticated.
+ *
+ * Replaces the public `/public/members/:id/logo` route disabled on 2026-08-31
+ * (decision D1). A bearer token cannot ride on an `<img src>`, so the customer
+ * app fetches this through its normal API client and renders the bytes — see
+ * `customer/src/components/ui/AuthedImage.tsx`.
+ */
+export const serveOwnLogo = handler(async (req, res) => {
+  const member = await ownMember(req);
+  const file = await logo.openOwnLogo(member.id);
+
+  res.setHeader('Cache-Control', 'private, no-cache');
+  res.setHeader('Content-Type', file.mime);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', 'inline');
+
+  file.stream.pipe(res);
+});
+
 export const serveMemberLogo = handler(async (req, res) => {
   const raw = req.params.id ?? '';
 
