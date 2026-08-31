@@ -19,6 +19,7 @@ import {
   documentRouter,
   invoiceRouter,
   memberAdminRouter,
+  memberPublicRouter,
   memberRouter,
 } from '@modules/member/member.routes';
 import { rbacRouter } from '@modules/rbac/rbac.routes';
@@ -54,6 +55,8 @@ router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, settingsPublicRouter);
 
 // The public homepage's member/country counts. No session, no member data.
 router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, sitePublicRouter);
+// The member's own company logo, for the homepage and the public directory.
+router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, memberPublicRouter);
 
 // M2 — membership catalogue. Admin writes are permission-gated per rbac.md §3;
 // the public router exposes only the published, allowlisted subset (C-03).

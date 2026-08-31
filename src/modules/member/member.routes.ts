@@ -49,6 +49,10 @@ memberRouter.patch(
   controller.updateOwnProfile,
 );
 
+memberRouter.post('/me/logo', upload.single('file'), controller.uploadOwnLogo);
+
+memberRouter.delete('/me/logo', controller.deleteOwnLogo);
+
 memberRouter.get('/me/change-requests', controller.listOwnChangeRequests);
 
 memberRouter.post(
@@ -275,3 +279,14 @@ memberAdminRouter.patch(
   validateRequest({ params: idParamSchema, body: verifyDocumentSchema }),
   controller.verifyDocument,
 );
+
+/**
+ * `/api/v1/public/members` — the one member-owned image a stranger may load.
+ *
+ * No `use(authenticate)` anywhere in this router, deliberately: it is read by
+ * the marketing homepage, which has no session. Entitlement is not skipped, it
+ * is moved into the query — see `openPublicLogo`.
+ */
+export const memberPublicRouter = Router();
+
+memberPublicRouter.get(`${END_POINTS.MEMBERS}/:id/logo`, controller.serveMemberLogo);

@@ -14,9 +14,16 @@ export interface SiteHubCountry {
  * association supplies, and it lives in the customer app's constants rather
  * than pretending to be data (spec §2, decision D-3).
  */
+/** One company in the homepage's member wall. */
+export interface SiteFeaturedMember {
+  name: string;
+  /** Where the logo loads from, or null when the member has not uploaded one. */
+  logo_url: string | null;
+}
+
 export interface SiteStats {
   members: number;
   countries: number;
-  member_names: string[];
+  featured_members: SiteFeaturedMember[];
   hub_countries: SiteHubCountry[];
 }

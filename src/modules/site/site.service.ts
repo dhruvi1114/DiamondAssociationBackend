@@ -1,4 +1,5 @@
 import { prisma } from '@db/prisma';
+import { logoUrl } from '@modules/member/member.logo.service';
 import * as repo from '@modules/site/site.repository';
 import type { SiteStats } from '@modules/site/site.types';
 
@@ -23,9 +24,9 @@ export const __resetSiteStatsCache = (): void => {
 };
 
 const load = async (): Promise<SiteStats> => {
-  const [members, names, groups] = await Promise.all([
+  const [members, featured, groups] = await Promise.all([
     repo.countActiveMembers(prisma),
-    repo.listActiveMemberNames(prisma),
+    repo.listFeaturedMembers(prisma),
     repo.groupMembersByCountry(prisma),
   ]);
 
@@ -51,7 +52,10 @@ const load = async (): Promise<SiteStats> => {
   return {
     members,
     countries: ids.length,
-    member_names: names.map((row) => row.company_name),
+    featured_members: featured.map((row) => ({
+      name: row.company_name,
+      logo_url: row.logo_path ? logoUrl(row.id) : null,
+    })),
     hub_countries,
   };
 };

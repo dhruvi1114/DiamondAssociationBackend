@@ -46,21 +46,37 @@ describe('getSiteStats', () => {
   });
 
   it('publishes names only for members who consented to the directory', async () => {
-    memberFindMany.mockResolvedValue([{ company_name: 'Acme Diamonds' }]);
+    memberFindMany.mockResolvedValue([{ id: 9n, company_name: 'Acme Diamonds', logo_path: null }]);
 
     const stats = await getSiteStats();
 
-    expect(stats.member_names).toEqual(['Acme Diamonds']);
+    expect(stats.featured_members).toEqual([{ name: 'Acme Diamonds', logo_url: null }]);
     expect(memberFindMany).toHaveBeenCalledWith({
       where: {
         deletedAt: null,
         status: 'ACTIVE',
         directory_visible: true,
       },
-      select: { company_name: true },
-      orderBy: { company_name: 'asc' },
+      select: { id: true, company_name: true, logo_path: true },
+      orderBy: [{ logo_path: { sort: 'asc', nulls: 'last' } }, { company_name: 'asc' }],
       take: 24,
     });
+  });
+
+  /*
+    The URL, not the storage key. A key is internal layout, and the endpoint
+    behind this URL re-checks that the member is still listed anyway.
+  */
+  it('gives a member with a logo a URL a browser can load', async () => {
+    memberFindMany.mockResolvedValue([
+      { id: 42n, company_name: 'Acme Diamonds', logo_path: 'members/42/abc.png' },
+    ]);
+
+    const stats = await getSiteStats();
+
+    expect(stats.featured_members).toEqual([
+      { name: 'Acme Diamonds', logo_url: '/api/v1/public/members/42/logo' },
+    ]);
   });
 
   it('counts distinct countries and names the busiest ones', async () => {
@@ -88,7 +104,7 @@ describe('getSiteStats', () => {
     expect(stats).toEqual({
       members: 0,
       countries: 0,
-      member_names: [],
+      featured_members: [],
       hub_countries: [],
     });
   });

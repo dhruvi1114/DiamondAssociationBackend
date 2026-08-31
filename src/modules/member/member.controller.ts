@@ -3,6 +3,7 @@ import { MemberStatus } from '@prisma/client';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { RES_STATUS } from '@constant/message.constant';
 import * as documentService from '@modules/document/document.service';
+import * as logo from '@modules/member/member.logo.service';
 import * as service from '@modules/member/member.service';
 import { AppError } from '@utils/appError';
 import { handleApiResponse } from '@utils/handleResponse';
@@ -45,7 +46,7 @@ const actor = (req: Request) => {
  * browser devtools tab. The key is unreachable over HTTP either way — this stops
  * it being *published*, which is a different question from whether it is usable.
  */
-const REDACTED_KEYS = new Set(['file_path']);
+const REDACTED_KEYS = new Set(['file_path', 'logo_path']);
 
 const serialise = <T>(value: T): unknown =>
   JSON.parse(
@@ -65,13 +66,28 @@ const ownMember = async (req: Request) => {
   return service.getOrCreateOwnMember(current.id, current);
 };
 
+/**
+ * Replace the logo's storage key with the URL a browser can actually load.
+ *
+ * `serialise` drops `logo_path` for the same reason it drops `file_path` — it is
+ * internal layout — so the record would otherwise carry no sign that a logo
+ * exists at all, and the profile screen could not show the member their own mark.
+ */
+const withLogoUrl = (record: { id?: bigint; logo_path?: string | null }): unknown => {
+  const base = serialise(record) as Record<string, unknown>;
+
+  base.logo_url = record.logo_path && record.id ? logo.logoUrl(record.id) : null;
+
+  return base;
+};
+
 /* --- member: profile ------------------------------------------------------- */
 
 export const getOwnProfile = handler(async (req, res) => {
   const current = actor(req);
   const data = await service.getOwnProfile(current.id, current);
 
-  handleApiResponse(res, { responseType: RES_STATUS.GET, data: serialise(data) });
+  handleApiResponse(res, { responseType: RES_STATUS.GET, data: withLogoUrl(data) });
 });
 
 export const updateOwnProfile = handler(async (req, res) => {
@@ -451,4 +467,82 @@ export const verifyDocument = handler(async (req, res) => {
     messageKey: body.status === 'VERIFIED' ? 'document.verified' : 'document.rejected',
     data: serialise(updated),
   });
+});
+
+/* --- member: company logo -------------------------------------------------- */
+
+/**
+ * `POST /members/me/logo` — the member's own mark, shown on the public site.
+ *
+ * Multipart, so the body is never encrypted (api-conventions.md §2). The bytes
+ * are sniffed in the service before anything is stored; nothing here trusts the
+ * filename or the browser's Content-Type.
+ */
+export const uploadOwnLogo = handler(async (req, res) => {
+  const member = await ownMember(req);
+  const file = req.file;
+
+  if (!file) {
+    throw new AppError({
+      errorType: ERROR_TYPES.INVALID_REQUEST,
+      messageKey: 'member.logoMissingFile',
+    });
+  }
+
+  const result = await logo.putOwnLogo(member.id, file, actor(req));
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'member.logoUpdated',
+    data: result,
+  });
+});
+
+export const deleteOwnLogo = handler(async (req, res) => {
+  const member = await ownMember(req);
+  const result = await logo.clearOwnLogo(member.id, actor(req));
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'member.logoRemoved',
+    data: result,
+  });
+});
+
+/**
+ * `GET /public/members/:id/logo` — no session.
+ *
+ * Every rule that decides whether these bytes may be seen lives in the service's
+ * WHERE clause: live, ACTIVE, and listed in the directory by the member's own
+ * choice. A member who fails any of them answers 404, identically to an id that
+ * was never issued.
+ */
+export const serveMemberLogo = handler(async (req, res) => {
+  const raw = req.params.id ?? '';
+
+  if (!/^\d+$/.test(raw)) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'member.logoNotFound' });
+  }
+
+  const file = await logo.openPublicLogo(BigInt(raw));
+  const etag = `"${file.key}"`;
+
+  res.setHeader('ETag', etag);
+  /*
+    `no-cache` is "keep it, but ask every time", not "do not store". A member who
+    has just left the directory must stop being served from a stranger's disk
+    cache; revalidation is cheap, because the ETag makes the usual answer a 304.
+  */
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Content-Type', file.mime);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', 'inline');
+
+  if (req.headers['if-none-match'] === etag) {
+    res.status(304).end();
+
+    return;
+  }
+
+  file.stream.pipe(res);
 });

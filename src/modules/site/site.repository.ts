@@ -11,7 +11,7 @@ import type { Db } from '@db/prisma';
 
 const ACTIVE_MEMBER = { deletedAt: null, status: 'ACTIVE' } as const;
 
-/** How many company names the marquee is given. It shows far fewer at a time. */
+/** How many companies the marquee is given. It shows far fewer at a time. */
 export const MEMBER_NAME_LIMIT = 24;
 
 /** How many countries the map plots. Beyond a dozen the dots stop reading. */
@@ -24,11 +24,15 @@ export const countActiveMembers = (db: Db) => db.member.count({ where: { ...ACTI
  * `directory_visible` is the member's own choice; publishing a name against it
  * on the homepage would be the same disclosure the directory refuses to make.
  */
-export const listActiveMemberNames = (db: Db) =>
+export const listFeaturedMembers = (db: Db) =>
   db.member.findMany({
     where: { ...ACTIVE_MEMBER, directory_visible: true },
-    select: { company_name: true },
-    orderBy: { company_name: 'asc' },
+    select: { id: true, company_name: true, logo_path: true },
+    /*
+      Members with a logo first. The wall is a row of marks, and a company that
+      has uploaded one earns the place ahead of a company rendered as text.
+    */
+    orderBy: [{ logo_path: { sort: 'asc', nulls: 'last' } }, { company_name: 'asc' }],
     take: MEMBER_NAME_LIMIT,
   });
 
