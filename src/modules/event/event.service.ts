@@ -185,12 +185,24 @@ export const updateEvent = async (id: bigint, input: UpdateEventInput, actor: Ev
 };
 
 /** One event with its price table, for the admin detail screen. */
+/**
+ * One event, for the admin screens.
+ *
+ * `banner_path` is swapped for `banner_url` on the way out. Two reasons, and
+ * both were live bugs: the edit drawer decides whether to load the poster by
+ * looking for `banner_url`, so the raw row meant an event with a poster opened
+ * showing an empty Upload box — and the path itself is a storage key, which
+ * `api-conventions.md` §8 keeps out of responses the same way the member
+ * module drops `file_path`.
+ */
 export const getEvent = async (id: bigint) => {
   const event = await repo.findEventById(prisma, id);
 
   if (!event) throw notFound();
 
-  return event;
+  const { banner_path, ...rest } = event;
+
+  return { ...rest, banner_url: bannerUrl(event.slug, banner_path) };
 };
 
 /** The admin list, paged. */
