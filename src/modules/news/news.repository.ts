@@ -158,6 +158,9 @@ interface PublicListArgs {
   categorySlug?: string;
   /** True for a signed-in member: member-only articles come back too. */
   includeMemberOnly: boolean;
+  /** Free text over the headline and summary. */
+  search?: string | undefined;
+  sort?: 'newest' | 'oldest' | undefined;
 }
 
 /** The homepage block, `/news`, and the member view of the same list. */
@@ -165,13 +168,34 @@ export const listPublishedArticles = async (db: Db, args: PublicListArgs) => {
   const where: Prisma.NewsArticleWhereInput = {
     ...(args.includeMemberOnly ? MEMBER_WHERE : PUBLIC_WHERE),
     ...(args.categorySlug ? { category: { slug: args.categorySlug, deletedAt: null } } : {}),
+    /*
+      Headline and summary only. A reader searching is remembering what an
+      article was called; matching the body would return every circular that
+      mentions the word once, and bury the one they meant.
+    */
+    ...(args.search
+      ? {
+          OR: [
+            { title: { contains: args.search, mode: 'insensitive' as const } },
+            { excerpt: { contains: args.search, mode: 'insensitive' as const } },
+          ],
+        }
+      : {}),
   };
+
+  const direction = args.sort === 'oldest' ? ('asc' as const) : ('desc' as const);
 
   const [rows, total] = await Promise.all([
     db.newsArticle.findMany({
       where,
       include: articleInclude,
-      orderBy: [{ published_at: 'desc' }, { id: 'desc' }],
+      /*
+        The id breaks ties in the same direction as the date. Two articles
+        published in the same minute would otherwise be free to swap places
+        between page one and page two, and a reader paging through would see one
+        of them twice and the other never.
+      */
+      orderBy: [{ published_at: direction }, { id: direction }],
       skip: (args.page - 1) * args.limit,
       take: args.limit,
     }),

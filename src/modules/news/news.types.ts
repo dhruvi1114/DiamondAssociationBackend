@@ -83,6 +83,17 @@ export const listPublicNewsSchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(NEWS_PAGE_SIZE_MAX).default(NEWS_PAGE_SIZE),
   category: slugField.optional(),
+  /*
+    Free text over the headline and the summary, not the body. A reader looking
+    for an article is remembering what it was called, and matching the body
+    would return every circular that happens to mention the word once.
+  */
+  search: z.string().trim().min(1).max(120).optional(),
+  /*
+    Two orders, both by publication date. "Relevance" would be a third thing to
+    define and defend, and this list is a chronology.
+  */
+  sort: z.enum(['newest', 'oldest']).default('newest'),
 });
 
 export type ListPublicNewsQuery = z.infer<typeof listPublicNewsSchema>;

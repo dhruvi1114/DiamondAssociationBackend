@@ -455,6 +455,8 @@ export const listPublishedNews = (query: ListPublicNewsQuery, includeMemberOnly:
     page: query.page,
     limit: query.limit,
     categorySlug: query.category,
+    search: query.search,
+    sort: query.sort,
     includeMemberOnly,
   });
 
