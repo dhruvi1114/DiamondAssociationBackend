@@ -25,6 +25,8 @@ export const END_POINTS = {
   // notice: a notice is pushed to chosen members, news is a page anyone can read.
   NEWS: '/news',
   NEWS_CATEGORIES: '/news-categories',
+  // The public marketing homepage's own numbers — member and country counts.
+  SITE: '/site',
   NOTIFICATIONS: '/notifications',
   DOCUMENTS: '/documents',
   DIRECTORY: '/directory',

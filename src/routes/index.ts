@@ -22,6 +22,7 @@ import {
   memberRouter,
 } from '@modules/member/member.routes';
 import { rbacRouter } from '@modules/rbac/rbac.routes';
+import { sitePublicRouter } from '@modules/site/site.routes';
 import {
   brandingPublicRouter,
   settingsPublicRouter,
@@ -50,6 +51,9 @@ router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, brandingPublicRouter);
 // The `is_public` settings — the display name the browser tab and the sign-in
 // screen are named after. Read-only; the allow-list is the `is_public` column.
 router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, settingsPublicRouter);
+
+// The public homepage's member/country counts. No session, no member data.
+router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, sitePublicRouter);
 
 // M2 — membership catalogue. Admin writes are permission-gated per rbac.md §3;
 // the public router exposes only the published, allowlisted subset (C-03).
