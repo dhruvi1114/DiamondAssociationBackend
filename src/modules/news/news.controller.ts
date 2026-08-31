@@ -90,7 +90,7 @@ export const getNewsArticle = handler(async (req, res) => {
 
   handleApiResponse(res, {
     responseType: RES_STATUS.GET,
-    data: { article: present.toDetail(article) },
+    data: { article: present.toDetailWithNeighbours(article) },
   });
 });
 

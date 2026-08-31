@@ -116,6 +116,29 @@ export const toDetail = (row: ArticleRow) => ({
   attachments: (row.attachments ?? []).map(attachment(row.slug)),
 });
 
+/** A neighbour link at the foot of an article. Slug and title, nothing else. */
+const neighbour = (row: { slug: string; title: string } | null) =>
+  row ? { slug: row.slug, title: row.title } : null;
+
+/**
+ * The article, plus the ones either side of it.
+ *
+ * Separate from `toDetail` because only the reading screen has neighbours —
+ * the admin panel and any future digest read the same article without them.
+ */
+export const toDetailWithNeighbours = (
+  row: ArticleRow & {
+    neighbours: {
+      previous: { slug: string; title: string } | null;
+      next: { slug: string; title: string } | null;
+    };
+  },
+) => ({
+  ...toDetail(row),
+  previous: neighbour(row.neighbours.previous),
+  next: neighbour(row.neighbours.next),
+});
+
 /**
  * The admin view: everything the panel edits, including what is not public yet.
  *

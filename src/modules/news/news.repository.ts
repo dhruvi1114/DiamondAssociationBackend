@@ -211,6 +211,50 @@ export const findPublishedArticleBySlug = (db: Db, slug: string, includeMemberOn
     include: articleInclude,
   });
 
+/**
+ * The articles either side of this one, in the order the listing shows.
+ *
+ * Scoped to the same audience as the article itself, so a visitor is never
+ * offered "next article" pointing at something they would then be 404'd on.
+ *
+ * Ordered on `published_at` with the id breaking ties in the same direction —
+ * the pairing the listing uses. Without the tiebreak, two articles published in
+ * the same minute make "previous" and "next" disagree about which came first,
+ * and a reader clicking next then previous does not come back.
+ */
+export const findNeighbours = async (
+  db: Db,
+  article: { id: bigint; published_at: Date | null },
+  includeMemberOnly: boolean,
+) => {
+  const visible = includeMemberOnly ? MEMBER_WHERE : PUBLIC_WHERE;
+  const at = article.published_at ?? new Date(0);
+  const select = { slug: true, title: true } as const;
+
+  const [previous, next] = await Promise.all([
+    // Older: further down the newest-first listing.
+    db.newsArticle.findFirst({
+      where: {
+        ...visible,
+        OR: [{ published_at: { lt: at } }, { published_at: at, id: { lt: article.id } }],
+      },
+      orderBy: [{ published_at: 'desc' }, { id: 'desc' }],
+      select,
+    }),
+    // Newer: further up it.
+    db.newsArticle.findFirst({
+      where: {
+        ...visible,
+        OR: [{ published_at: { gt: at } }, { published_at: at, id: { gt: article.id } }],
+      },
+      orderBy: [{ published_at: 'asc' }, { id: 'asc' }],
+      select,
+    }),
+  ]);
+
+  return { previous, next };
+};
+
 /* ----------------------------------------------------------- attachments -- */
 
 export const createAttachment = (db: Db, data: Prisma.NewsArticleAttachmentUncheckedCreateInput) =>

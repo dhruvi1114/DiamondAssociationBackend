@@ -472,7 +472,9 @@ export const getPublishedArticle = async (slug: string, includeMemberOnly: boole
 
   if (!article) throw notFound();
 
-  return article;
+  const neighbours = await repo.findNeighbours(prisma, article, includeMemberOnly);
+
+  return { ...article, neighbours };
 };
 
 export const listPublicCategories = (includeMemberOnly: boolean) =>
