@@ -79,21 +79,32 @@ const browseFilters = (req: Request) => {
     limit: number;
     type?: string[];
     city?: string[];
+    state?: string[];
     from?: Date;
     to?: Date;
     price?: 'free' | 'paid';
     open?: boolean;
+    sort?: 'upcoming' | 'recent';
   };
 
+  /*
+    Every field is named twice on purpose — once as the query string spells it
+    and once as the repository does — and every one of them has to be listed
+    here. A filter added to the schema and the repository but not to this map is
+    silently ignored: the request validates, the query runs, and nothing
+    filters. That is exactly how `sort` shipped doing nothing.
+  */
   return {
     page: query.page,
     limit: query.limit,
     typeIds: query.type?.map((id) => BigInt(id)),
     cities: query.city,
+    states: query.state,
     from: query.from,
     to: query.to,
     price: query.price,
     openOnly: query.open,
+    sort: query.sort,
   };
 };
 

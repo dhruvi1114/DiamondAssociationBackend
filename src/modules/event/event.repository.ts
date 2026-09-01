@@ -176,6 +176,8 @@ export interface BrowseFilters {
   /** `EventTypes.id`. Several, because "conference OR seminar" is a real question. */
   typeIds?: bigint[];
   cities?: string[];
+  /** State names, matched exactly against the event's own `state` column. */
+  states?: string[];
   /** Events starting on or after this day. */
   from?: Date;
   /** Events starting on or before this day. */
@@ -203,6 +205,7 @@ const browseEvents = (
   */
   const typeIds = filters.typeIds?.length ? filters.typeIds : null;
   const cities = filters.cities?.length ? filters.cities : null;
+  const states = filters.states?.length ? filters.states : null;
 
   return prisma.$queryRaw<BrowseEventRow[]>(Prisma.sql`
     SELECT e."id", e."slug", e."title", e."banner_path", e."banner_alt",
@@ -227,6 +230,7 @@ const browseEvents = (
        AND (${upcomingOnly}::boolean = false OR e."end_at" >= now())
        AND (${typeIds}::bigint[] IS NULL OR e."event_type_id" = ANY(${typeIds}::bigint[]))
        AND (${cities}::text[] IS NULL OR e."city" = ANY(${cities}::text[]))
+       AND (${states}::text[] IS NULL OR e."state" = ANY(${states}::text[]))
        AND (${filters.from ?? null}::timestamptz IS NULL OR e."start_at" >= ${filters.from ?? null}::timestamptz)
        AND (${filters.to ?? null}::timestamptz IS NULL OR e."start_at" <= ${filters.to ?? null}::timestamptz)
        /*
@@ -277,10 +281,11 @@ const browseEvents = (
 export interface BrowseFacets {
   types: { id: string; name: string; count: number }[];
   cities: { name: string; count: number }[];
+  states: { name: string; count: number }[];
 }
 
 export const browseFacets = async (publicOnly: boolean): Promise<BrowseFacets> => {
-  const [types, cities] = await Promise.all([
+  const [types, cities, states] = await Promise.all([
     prisma.$queryRaw<{ id: bigint; name: string; count: bigint }[]>(Prisma.sql`
       SELECT et."id", et."name", count(*) AS count
         FROM "Events" e
@@ -303,6 +308,22 @@ export const browseFacets = async (publicOnly: boolean): Promise<BrowseFacets> =
        GROUP BY e."city"
        ORDER BY count(*) DESC, e."city" ASC
     `),
+    /*
+      The same shape as cities, one level up. A member browsing from Rajkot
+      wants everything in Gujarat, not the four towns it happens to be split
+      across — and a city list alone cannot express that.
+    */
+    prisma.$queryRaw<{ name: string; count: bigint }[]>(Prisma.sql`
+      SELECT e."state" AS name, count(*) AS count
+        FROM "Events" e
+       WHERE e."deletedAt" IS NULL
+         AND e."status" = ${EVENT_STATUS_PUBLISHED}
+         AND e."end_at" >= now()
+         AND e."state" IS NOT NULL
+         AND (${publicOnly}::boolean = false OR e."visibility" = ${EVENT_VISIBILITY_PUBLIC})
+       GROUP BY e."state"
+       ORDER BY count(*) DESC, e."state" ASC
+    `),
   ]);
 
   return {
@@ -312,6 +333,7 @@ export const browseFacets = async (publicOnly: boolean): Promise<BrowseFacets> =
       count: Number(row.count),
     })),
     cities: cities.map((row) => ({ name: row.name, count: Number(row.count) })),
+    states: states.map((row) => ({ name: row.name, count: Number(row.count) })),
   };
 };
 

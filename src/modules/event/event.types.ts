@@ -177,6 +177,7 @@ export const browseEventsSchema = z.object({
   /** `EventTypes` ids. */
   type: csv.pipe(z.array(z.string().regex(/^\d+$/, 'validation.invalidId'))).optional(),
   city: csv.optional(),
+  state: csv.optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   price: z.enum(['free', 'paid']).optional(),
