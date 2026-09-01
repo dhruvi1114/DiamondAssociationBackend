@@ -94,7 +94,16 @@ export const listDirectory = async (
     db.member.findMany({
       where,
       select: SELECT,
-      orderBy: { company_name: 'asc' },
+      /*
+        The name breaks the tie on "newest". Two companies activated on the same
+        day would otherwise be free to swap places between page one and page
+        two, and a reader paging through would see one of them twice and the
+        other never.
+      */
+      orderBy:
+        query.sort === 'newest'
+          ? [{ joined_on: 'desc' as const }, { company_name: 'asc' as const }]
+          : [{ company_name: 'asc' as const }],
       skip: (query.page - 1) * DIRECTORY_PAGE_SIZE,
       /* The cap is here and nowhere else. No query parameter can raise it. */
       take: DIRECTORY_PAGE_SIZE,

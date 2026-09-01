@@ -62,6 +62,15 @@ export const presentCard = (row: DirectoryRow): DirectoryCard => ({
   state: row.addresses[0]?.state ?? null,
   categories: row.categories.map((link) => link.category.name),
   logoUrl: logoUrl(row),
+  /*
+    The year and the website ride on the card as well as the profile. Neither
+    is a new disclosure — both are already published one click away, to the same
+    audience, and the card is behind the same gate the profile is. What they buy
+    is a reader deciding from the list instead of opening six profiles to find
+    the exporter who has been a member since the eighties.
+  */
+  joinedYear: row.joined_on ? row.joined_on.getUTCFullYear() : null,
+  website: row.website,
 });
 
 export const presentProfile = (row: DirectoryRow): DirectoryProfile => {
@@ -70,9 +79,6 @@ export const presentProfile = (row: DirectoryRow): DirectoryProfile => {
   return {
     ...presentCard(row),
     memberCode: row.member_code,
-    /* The year, not the date. "Member since 2026" is the useful signal. */
-    joinedYear: row.joined_on ? row.joined_on.getUTCFullYear() : null,
-    website: row.website,
     about: row.about,
     contact: contact
       ? {

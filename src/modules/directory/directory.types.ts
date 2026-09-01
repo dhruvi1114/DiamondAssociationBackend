@@ -15,6 +15,12 @@ export const listDirectorySchema = z.object({
   city: z.string().trim().max(100).optional(),
   state: z.string().trim().max(100).optional(),
   page: z.coerce.number().int().min(1).max(500).default(1),
+  /*
+    Two orders. A–Z is a directory's own order — a reader looking for a company
+    they can half-remember scans an alphabet. "Newest" answers the other
+    question people bring to a member list: who has joined recently.
+  */
+  sort: z.enum(['az', 'newest']).default('az'),
 });
 
 export const directorySlugSchema = z.object({
@@ -55,6 +61,9 @@ export interface DirectoryCard {
   state: string | null;
   categories: string[];
   logoUrl: string | null;
+  /** The year the membership first became active, or null before it did. */
+  joinedYear: number | null;
+  website: string | null;
 }
 
 export interface DirectoryContact {
@@ -66,8 +75,6 @@ export interface DirectoryContact {
 
 export interface DirectoryProfile extends DirectoryCard {
   memberCode: string | null;
-  joinedYear: number | null;
-  website: string | null;
   about: string | null;
   contact: DirectoryContact | null;
 }
