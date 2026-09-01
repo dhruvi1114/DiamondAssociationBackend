@@ -186,6 +186,13 @@ export const browseEventsSchema = z.object({
     whether the door is still open.
   */
   open: z.coerce.boolean().optional(),
+  /*
+    Two orders over the same column. "Upcoming" is what a browsing page wants —
+    the next thing to book first — and "recent" is the archive read, newest past
+    event first. Both are `start_at`; nothing here sorts by relevance, which
+    would be a third thing to define and defend on a list of a dozen events.
+  */
+  sort: z.enum(['upcoming', 'recent']).default('upcoming'),
 });
 
 export type BrowseEventsQuery = z.infer<typeof browseEventsSchema>;

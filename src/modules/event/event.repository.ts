@@ -171,6 +171,8 @@ export interface BrowseEventRow {
  * array means "no opinion", not "match nothing".
  */
 export interface BrowseFilters {
+  /** `upcoming` is soonest first; `recent` is the archive read, newest first. */
+  sort?: 'upcoming' | 'recent' | undefined;
   /** `EventTypes.id`. Several, because "conference OR seminar" is a real question. */
   typeIds?: bigint[];
   cities?: string[];
@@ -249,7 +251,17 @@ const browseEvents = (
              AND (e."registration_closes_at" IS NULL OR e."registration_closes_at" >= now())
              AND (e."capacity" IS NULL OR e."capacity" > e."seats_taken"))
        )
-     ORDER BY e."start_at" ASC
+     /*
+       The direction is a checked literal, not a bound parameter: SQL will not
+       take a placeholder for an ORDER BY direction, so it is decided in
+       TypeScript instead. The zod schema has already narrowed the value to one
+       of two strings, and the ternary below means no caller-supplied text can
+       reach the statement.
+
+       Note there are no backticks in this comment. It sits inside a template
+       literal, and one would end the string.
+     */
+     ORDER BY e."start_at" ${filters.sort === 'recent' ? Prisma.sql`DESC` : Prisma.sql`ASC`}
      LIMIT ${limit} OFFSET ${offset}
   `);
 };
