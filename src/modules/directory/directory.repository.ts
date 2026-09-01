@@ -134,6 +134,23 @@ export const listCategoryFacets = (db: Db) =>
     take: DIRECTORY_FACET_LIMIT,
   });
 
+/*
+  States, distinct from the city list rather than derived from it.
+
+  A city facet already carries its state, but "Gujarat" appears once per town in
+  it — deriving the state list in the browser would mean the page deduplicating
+  something the database can answer in one grouped read, and the count would be
+  wrong the moment the facet limit truncated the cities.
+*/
+export const listStateFacets = (db: Db) =>
+  db.memberAddress.findMany({
+    where: { is_primary: true, deletedAt: null, member: { ...LISTED } },
+    select: { state: true },
+    distinct: ['state'],
+    orderBy: { state: 'asc' },
+    take: DIRECTORY_FACET_LIMIT,
+  });
+
 export const listCityFacets = (db: Db) =>
   db.memberAddress.findMany({
     where: { is_primary: true, deletedAt: null, member: { ...LISTED } },

@@ -57,14 +57,16 @@ export const detail = async (userId: bigint, slug: string) => {
 export const facets = async (userId: bigint) => {
   await open(userId);
 
-  const [categories, cities] = await Promise.all([
+  const [categories, cities, states] = await Promise.all([
     repo.listCategoryFacets(prisma),
     repo.listCityFacets(prisma),
+    repo.listStateFacets(prisma),
   ]);
 
   return {
     categories: categories.map((cat) => cat.name),
     cities: cities.map((place) => ({ city: place.city, state: place.state })),
+    states: states.map((place) => place.state),
   };
 };
 
