@@ -44,12 +44,21 @@ export interface DirectoryRow {
   website: string | null;
   logo_path: string | null;
   joined_on: Date | null;
-  addresses: { city: string; state: string }[];
+  company_type: { name: string } | null;
+  addresses: {
+    line1: string;
+    line2: string | null;
+    city: string;
+    state: string;
+    country: string;
+    pincode: string;
+  }[];
   contacts: {
     name: string;
     designation: string | null;
     email: string | null;
     phone: string | null;
+    is_primary: boolean;
   }[];
   categories: { category: { name: string } }[];
 }
@@ -71,11 +80,31 @@ export interface DirectoryContact {
   designation: string | null;
   email: string | null;
   phone: string | null;
+  /** The company's front door. Exactly one contact carries it. */
+  isPrimary: boolean;
+}
+
+/** The registered address, as the profile publishes it (D-6). */
+export interface DirectoryAddress {
+  line1: string;
+  line2: string | null;
+  city: string;
+  state: string;
+  country: string;
+  pincode: string;
+  /** The whole thing on one line, for a screen that wants it as prose. */
+  formatted: string;
 }
 
 export interface DirectoryProfile extends DirectoryCard {
   memberCode: string | null;
   about: string | null;
+  companyType: string | null;
+  country: string | null;
+  address: DirectoryAddress | null;
+  /** Every published contact, primary first. */
+  contacts: DirectoryContact[];
+  /** The primary, repeated for callers that want only the front door. */
   contact: DirectoryContact | null;
 }
 

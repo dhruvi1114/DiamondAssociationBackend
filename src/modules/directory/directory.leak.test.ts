@@ -29,27 +29,55 @@ const row = {
   pan_number: 'AABCS1234F',
   iec_code: '0398012345',
   trade_license_no: 'TL-99',
-  addresses: [{ city: 'Ahmedabad', state: 'Gujarat', pincode: '380009' }],
+  addresses: [
+    {
+      line1: '12 Relief Road',
+      line2: 'Lal Darwaja',
+      city: 'Ahmedabad',
+      state: 'Gujarat',
+      country: 'India',
+      pincode: '380009',
+    },
+  ],
   contacts: [
     {
       name: 'Rakesh Patel',
       designation: 'Director',
       email: 'rakesh@shreejiexports.in',
       phone: '+91 98250 12345',
+      is_primary: true,
+    },
+    {
+      name: 'Meena Shah',
+      designation: 'Sales Manager',
+      email: 'meena@shreejiexports.in',
+      phone: '+91 98250 99999',
+      is_primary: false,
     },
   ],
+  company_type: { name: 'Trader' },
   categories: [{ category: { name: 'Spices' } }, { category: { name: 'Agri Commodities' } }],
 } as unknown as DirectoryRow;
 
 describe('directory presenter', () => {
+  /*
+    The allowlist, widened by decision D-6: the registered address, the country,
+    the company type and every published contact. The test still pins the exact
+    key set, which is the point of it — a field reaches the profile by being
+    added to this list, not by appearing in a presenter.
+  */
   it('returns exactly the allowlisted profile keys', () => {
     expect(Object.keys(presentProfile(row)).sort()).toEqual(
       [
         'about',
+        'address',
         'categories',
         'city',
         'companyName',
+        'companyType',
         'contact',
+        'contacts',
+        'country',
         'joinedYear',
         'logoUrl',
         'memberCode',
@@ -66,11 +94,43 @@ describe('directory presenter', () => {
     ['IEC code', '0398012345'],
     ['trade licence', 'TL-99'],
     ['registered legal name', 'Shreeji Overseas'],
-    ['pincode', '380009'],
     ['storage path', 'members/42/logo.png'],
   ])('never publishes the %s', (_label, secret) => {
     expect(JSON.stringify(presentProfile(row))).not.toContain(secret);
     expect(JSON.stringify(presentCard(row))).not.toContain(secret);
+  });
+
+  /*
+    The street address moved from "never" to "on the profile" (D-6). It is still
+    off the card: the card is the search result, and a listing that carried
+    every member's door would be the scrape this module is arranged to prevent.
+  */
+  it('publishes the registered address on the profile and not on the card', () => {
+    expect(presentProfile(row).address?.pincode).toBe('380009');
+    expect(presentProfile(row).address?.line1).toBe('12 Relief Road');
+    expect(JSON.stringify(presentCard(row))).not.toContain('380009');
+    expect(JSON.stringify(presentCard(row))).not.toContain('Relief Road');
+  });
+
+  it('formats the address as one line, ready to render', () => {
+    expect(presentProfile(row).address?.formatted).toContain('12 Relief Road');
+    expect(presentProfile(row).address?.formatted).toContain('380009');
+  });
+
+  /* Every contact, primary first — and the primary repeated for callers that
+     only want the front door. */
+  it('publishes every contact, with the primary marked and leading', () => {
+    const profile = presentProfile(row);
+
+    expect(profile.contacts).toHaveLength(2);
+    expect(profile.contacts[0]?.isPrimary).toBe(true);
+    expect(profile.contact?.name).toBe('Rakesh Patel');
+    expect(profile.contacts[1]?.name).toBe('Meena Shah');
+  });
+
+  it('keeps every contact off the card, not just the primary', () => {
+    expect(JSON.stringify(presentCard(row))).not.toContain('Meena Shah');
+    expect(JSON.stringify(presentCard(row))).not.toContain('98250 99999');
   });
 
   /*

@@ -2,6 +2,7 @@ import { API_V1, END_POINTS } from '@constant';
 
 import type {
   DirectoryCard,
+  DirectoryContact,
   DirectoryProfile,
   DirectoryRow,
 } from '@modules/directory/directory.types';
@@ -73,20 +74,57 @@ export const presentCard = (row: DirectoryRow): DirectoryCard => ({
   website: row.website,
 });
 
+/** One contact, as the profile publishes it. */
+const contactOf = (row: DirectoryRow['contacts'][number]): DirectoryContact => ({
+  name: row.name,
+  designation: row.designation,
+  email: row.email,
+  phone: row.phone,
+  isPrimary: row.is_primary,
+});
+
+/**
+ * The registered address, street lines included (D-6).
+ *
+ * `formatted` is built here rather than in the client: an address is written
+ * differently in different countries, and the rule for it belongs next to the
+ * data rather than in whichever screen happens to render it first.
+ */
+const addressOf = (row: DirectoryRow): DirectoryProfile['address'] => {
+  const address = row.addresses[0];
+
+  if (!address) return null;
+
+  const formatted = [
+    address.line1,
+    address.line2,
+    [address.city, address.state].filter(Boolean).join(', '),
+    [address.pincode, address.country].filter(Boolean).join(', '),
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  return { ...address, formatted };
+};
+
 export const presentProfile = (row: DirectoryRow): DirectoryProfile => {
-  const contact = row.contacts[0] ?? null;
+  const contacts = row.contacts.map(contactOf);
+  const address = addressOf(row);
 
   return {
     ...presentCard(row),
     memberCode: row.member_code,
     about: row.about,
-    contact: contact
-      ? {
-          name: contact.name,
-          designation: contact.designation,
-          email: contact.email,
-          phone: contact.phone,
-        }
-      : null,
+    companyType: row.company_type?.name ?? null,
+    country: address?.country ?? null,
+    address,
+    contacts,
+    /*
+      The primary, repeated. The list is ordered primary-first, so this is its
+      head — but a caller that wants the front door should not have to know
+      that, and a company with no primary marked gets null rather than whoever
+      happens to sort first.
+    */
+    contact: contacts.find((entry) => entry.isPrimary) ?? null,
   };
 };

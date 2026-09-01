@@ -32,15 +32,30 @@ const SELECT = {
   website: true,
   logo_path: true,
   joined_on: true,
+  /* The firm's legal form — Grower, Trader — from the CompanyTypes master. */
+  company_type: { select: { name: true } },
   addresses: {
     where: { is_primary: true, deletedAt: null },
-    select: { city: true, state: true },
+    /*
+      The full registered address, street lines and pincode included (D-6). It
+      was city and state only; the association decided a member looking up
+      another should be able to find their door.
+    */
+    select: { line1: true, line2: true, city: true, state: true, country: true, pincode: true },
     take: 1,
   },
   contacts: {
-    where: { is_primary: true, deletedAt: null },
-    select: { name: true, designation: true, email: true, phone: true },
-    take: 1,
+    /*
+      Every published contact, not only the primary (D-6). The primary is still
+      marked, because a reader ringing a company wants to know which number is
+      the front door.
+
+      Ordered so the primary leads and the rest follow by name — a list that
+      reorders itself between requests makes its own pagination lie.
+    */
+    where: { deletedAt: null },
+    select: { name: true, designation: true, email: true, phone: true, is_primary: true },
+    orderBy: [{ is_primary: 'desc' }, { name: 'asc' }],
   },
   categories: { select: { category: { select: { name: true } } } },
 } satisfies Prisma.MemberSelect;
