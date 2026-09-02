@@ -131,11 +131,42 @@ export const eventHoldSweepJob: JobDefinition = {
   },
 };
 
+/**
+ * A report is worth keeping for one annual cycle: at the 2027 AGM you want the
+ * 2026 equivalent to compare against, and nothing older than that.
+ */
+const GENERATED_REPORT_RETENTION_DAYS = 365;
+
+/**
+ * Delete generated reports past their retention (M10).
+ *
+ * The row itself is small; what grows is `report_data`, which holds every detail
+ * row of every report anyone ticked the box for. Left alone that is the one
+ * table here that grows without bound — and it grows fastest exactly when the
+ * feature is being used well.
+ *
+ * Deleted rather than emptied: a report stripped of its result would still list,
+ * still be openable, and still offer a download that produced nothing.
+ */
+export const reportPruneJob: JobDefinition = {
+  name: 'report.prune',
+  schedule: '30 3 * * *',
+  description: 'Deletes generated reports older than a year.',
+  handler: async () => {
+    const result = await prisma.generatedReport.deleteMany({
+      where: { createdAt: { lt: daysAgo(GENERATED_REPORT_RETENTION_DAYS) } },
+    });
+
+    return result.count;
+  },
+};
+
 export const jobDefinitions: JobDefinition[] = [
   notificationDrainJob,
   tokenPruneJob,
   retentionPruneJob,
   eventHoldSweepJob,
+  reportPruneJob,
 ];
 
 /**

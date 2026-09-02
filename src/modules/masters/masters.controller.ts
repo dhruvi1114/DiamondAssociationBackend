@@ -237,6 +237,18 @@ export const publicCatalogue = handler(async (_req, res) => {
   handleApiResponse(res, { responseType: RES_STATUS.GET, data });
 });
 
+/**
+ * The plans a visitor may choose from on the membership page (C-03).
+ *
+ * Separate from `publicCatalogue`, which the signup form's category list is
+ * still built from — the two answer different questions and merging them would
+ * have made a change to one a change to the other.
+ */
+export const publicPlans = handler(async (_req, res) => {
+  const data = await service.publicPlans();
+  handleApiResponse(res, { responseType: RES_STATUS.GET, data });
+});
+
 /* --- company types -------------------------------------------------------- */
 
 const regList = <T extends { page: number; limit: number }>(

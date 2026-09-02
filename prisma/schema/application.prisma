@@ -157,6 +157,18 @@ model MembershipApplication {
   /// FK to MembershipTiers.id, when the category has bands. ON DELETE RESTRICT.
   tier_id BigInt?
 
+  /// FK to FeeStructures.id — the plan the applicant picked on the membership
+  /// page, so the figure they were shown is the figure they are invoiced.
+  ///
+  /// Nullable, and not only for old rows: an application started before the
+  /// plans existed, or created by staff on the applicant's behalf, has no
+  /// choice to record. Activation falls back to resolving a price the old way
+  /// when this is null, so nothing that worked before stops working.
+  ///
+  /// ON DELETE SET NULL: retiring a price must not delete an application, and a
+  /// null here degrades to that same fallback.
+  fee_structure_id BigInt?
+
   /// Where the application sits.
   status ApplicationStatus @default(DRAFT)
 
@@ -230,6 +242,9 @@ model MembershipApplication {
 
   /// The class applied for.
   category MembershipCategory @relation(fields: [category_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// The plan picked on the membership page, when one was.
+  fee_structure FeeStructure? @relation(fields: [fee_structure_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   /// The band applied for.
   tier MembershipTier? @relation(fields: [tier_id], references: [id], onDelete: Restrict, onUpdate: Cascade)

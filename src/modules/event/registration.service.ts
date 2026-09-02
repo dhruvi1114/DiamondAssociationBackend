@@ -764,13 +764,15 @@ export const registerAsGuest = async (
 
   const graceDays = await getNumericSetting(SETTING_KEYS.MEMBERSHIP_GRACE_DAYS, DEFAULT_GRACE_DAYS);
 
+  const seatCount = input.attendees.length;
+
   const priced = priceBooking({
     tiers: event.price_tiers as PriceTier[],
     on: now,
-    seats: 1,
+    seats: seatCount,
     taxRate: event.tax_rate,
     // No membership at all, so the non-member price applies whatever the grace
-    // period says.
+    // period says — and to every seat on the booking, not only the booker's.
     membershipValidTill: null,
     graceDays,
   });
@@ -780,7 +782,9 @@ export const registerAsGuest = async (
   const expiresAt = await holdDeadline(now);
 
   return prisma.$transaction(async (tx) => {
-    const taken = await seats.takeSeats(tx, event.id, 1);
+    // All of them or none. A partial take would hold seats for a booking that
+    // then rolls back, and the sweep has nothing to release them by.
+    const taken = await seats.takeSeats(tx, event.id, seatCount);
 
     if (taken === null) throw conflict('event.soldOut');
 
@@ -819,7 +823,7 @@ export const registerAsGuest = async (
             dueDate: expiresAt,
             eventTitle: event.title,
             tierName: priced.tier.name,
-            seats: 1,
+            seats: seatCount,
             unitPrice: priced.unitPrice,
             subtotal: priced.subtotal,
             taxRate: event.tax_rate,
@@ -836,7 +840,7 @@ export const registerAsGuest = async (
         guest_registrant_id: guest.id,
         registration_code: registrationCode,
         status,
-        attendee_count: 1,
+        attendee_count: seatCount,
         price_tier_id: priced.tier.id,
         subtotal: priced.subtotal,
         tax_amount: priced.taxAmount,
@@ -862,19 +866,45 @@ export const registerAsGuest = async (
       },
     });
 
-    await tx.eventRegistrationAttendee.create({
-      data: {
-        registration_id: registration.id,
-        attendee_code: `${registrationCode}-01`,
-        full_name: input.full_name,
-        designation: input.designation ?? null,
-        email: input.email,
-        phone: input.phone,
-        unit_price: priced.unitPrice,
-        food_preference: event.collect_food_preference ? (input.food_preference ?? null) : null,
-        special_requirement: input.special_requirement ?? null,
-      },
-    });
+    /*
+      One row per person, each with its own code and the price frozen onto it —
+      the same shape a member booking writes, so the admin list, the attendee
+      export and the door check do not have to tell the two apart.
+
+      An attendee without an email keeps their code and loses only the message
+      carrying it; the booker's confirmation lists every code, so nobody is
+      stranded by a field they were allowed to leave blank.
+    */
+    const attendeeRows: { full_name: string; email: string | null; attendee_code: string }[] = [];
+    let index = 0;
+
+    for (const attendee of input.attendees) {
+      index += 1;
+
+      const person = await tx.eventRegistrationAttendee.create({
+        data: {
+          registration_id: registration.id,
+          attendee_code: `${registrationCode}-${String(index).padStart(2, '0')}`,
+          full_name: attendee.full_name,
+          designation: attendee.designation ?? null,
+          email: attendee.email ?? null,
+          phone: attendee.phone ?? null,
+          unit_price: priced.unitPrice,
+          food_preference: event.collect_food_preference
+            ? (attendee.food_preference ?? null)
+            : null,
+          id_type: event.collect_gov_id ? (attendee.id_type ?? null) : null,
+          id_number: event.collect_gov_id ? (attendee.id_number ?? null) : null,
+          special_requirement: attendee.special_requirement ?? null,
+        },
+      });
+
+      attendeeRows.push({
+        full_name: person.full_name,
+        email: person.email,
+        attendee_code: person.attendee_code,
+      });
+    }
 
     // Their only way back to this booking. Issued inside the transaction so a
     // link is never emailed for a booking that then rolled back.
@@ -888,7 +918,7 @@ export const registerAsGuest = async (
       eventTitle: event.title,
       eventDate: event.start_at,
       registrationCode,
-      seatCount: 1,
+      seatCount,
     };
 
     if (needsApproval) {
@@ -896,13 +926,7 @@ export const registerAsGuest = async (
     } else if (priced.isFree) {
       await notify.notifyConfirmed(tx, notice, {
         venue: [event.venue_name, event.city].filter(Boolean).join(', '),
-        attendees: [
-          {
-            full_name: input.full_name,
-            email: input.email,
-            attendee_code: `${registrationCode}-01`,
-          },
-        ],
+        attendees: attendeeRows,
       });
     } else if (invoice) {
       await notify.notifyPendingPayment(tx, notice, {

@@ -80,6 +80,14 @@ export const registrationFields = {
     .array(z.string().regex(/^\d+$/, 'validation.invalidId'))
     .min(1, 'validation.requiredFields')
     .max(20),
+  /*
+    The plan picked on the membership page, when the applicant came that way.
+
+    Optional, and deliberately so: somebody who lands on /signup directly has
+    chosen nothing, and staff entering an application on an applicant's behalf
+    have nothing to pass. Both still price the old way at approval.
+  */
+  fee_structure_id: z.string().regex(/^\d+$/, 'validation.invalidId').optional(),
 } as const;
 
 /**

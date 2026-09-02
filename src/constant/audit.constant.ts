@@ -23,6 +23,13 @@ export const AUDIT_ACTIONS = {
   NOTIFICATION_QUEUED: 'notification.queued',
   NOTIFICATION_FAILED: 'notification.failed',
   SETTING_UPDATED: 'setting.updated',
+  /**
+   * A report was generated (M10). `after` carries its type, name and row count.
+   *
+   * Worth auditing even though a report changes nothing: it records that a
+   * member list left the system, and who took it.
+   */
+  REPORT_GENERATED: 'report.generated',
 
   // --- M1: authentication (rbac.md §1, M1 definition of done) ---------------
   /** A member account was created by the public signup form. */
@@ -63,6 +70,14 @@ export const AUDIT_ACTIONS = {
   ADMIN_USER_ROLE_ASSIGNED: 'admin_user.role_assigned',
   /** A role was withdrawn from a staff account. */
   ADMIN_USER_ROLE_REVOKED: 'admin_user.role_revoked',
+  /**
+   * A role's permission set was replaced (M10).
+   *
+   * `before` and `after` carry the two code lists. Widening a role is the single
+   * most consequential thing this platform allows, and it is invisible in every
+   * other record — nothing about the affected accounts changes.
+   */
+  ROLE_PERMISSIONS_UPDATED: 'role.permissions_updated',
 
   // --- M2: membership catalogue ---------------------------------------------
   /** A membership category was created. */

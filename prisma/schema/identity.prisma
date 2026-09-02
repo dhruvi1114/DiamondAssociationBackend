@@ -146,6 +146,9 @@ model AdminUser {
   auth_tokens    AuthToken[]
   reset_tokens   PasswordResetToken[]
 
+  /// Reports this staff member generated (M10).
+  generated_reports GeneratedReport[]
+
   /// KYC documents this staff member verified or rejected.
   verified_documents      MemberDocument[]             @relation("MemberDocumentVerifier")
   /// Profile change requests this staff member decided.

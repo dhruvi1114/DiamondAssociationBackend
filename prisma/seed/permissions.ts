@@ -69,6 +69,7 @@ export const PERMISSION_CATALOGUE: { code: string; description: string }[] = [
   { code: 'notification.view', description: 'View the notification outbox and delivery status.' },
 
   { code: 'report.view', description: 'View reports.' },
+  { code: 'report.create', description: 'Generate a new report.' },
   { code: 'report.export', description: 'Export reports.' },
 
   { code: 'org.manage', description: 'Manage designations, committees and chapters.' },

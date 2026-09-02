@@ -301,6 +301,10 @@
     "adminUpdated": "Staff account updated",
     "adminEmailExists": "A staff account already exists with this email address",
     "cannotRemoveOwnAccess": "You cannot remove your own access",
+    "rolePermissionsUpdated": "Role permissions updated",
+    "cannotEditOwnRole": "You cannot change the permissions of a role you hold yourself. Ask a super admin.",
+    "superAdminRoleFixed": "The SUPER_ADMIN role cannot be edited. It bypasses every permission check, so its list decides nothing.",
+    "unknownPermission": "There is no permission called {{permission}}.",
     "lastSuperAdmin": "This is the last super admin. Assign the role to someone else first",
     "roleAssigned": "Role assigned",
     "roleRevoked": "Role removed"
@@ -415,6 +419,12 @@
     "cityInUse": "This city is used by {{addresses}} address(es). Deactivate it instead",
     "duplicateCode": "A row with that code already exists",
     "duplicateName": "A row with that name already exists here"
+  },
+  "report": {
+    "notFound": "That report does not exist",
+    "generated": "Report generated",
+    "tooLarge": "This report matches {{rows}} rows, more than a spreadsheet can hold. Narrow the filters and try again.",
+    "invalidFilter": "A {{report}} report cannot be filtered by {{filter}}."
   },
   "settings": {
     "notFound": "That setting does not exist",

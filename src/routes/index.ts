@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { environment } from '@config/config';
 import { END_POINTS } from '@constant';
 import { logger } from '@logger/logger';
+import { auditRouter } from '@modules/audit/audit.routes';
 import { authRouter } from '@modules/auth/auth.routes';
+import { dashboardRouter } from '@modules/dashboard/dashboard.routes';
 import { applicationAdminRouter, applicationRouter } from '@modules/application/application.routes';
 import {
   applicationPublicRouter,
@@ -25,6 +27,7 @@ import {
   memberRouter,
 } from '@modules/member/member.routes';
 import { rbacRouter } from '@modules/rbac/rbac.routes';
+import { reportRouter } from '@modules/report/report.routes';
 import { sitePublicRouter } from '@modules/site/site.routes';
 import {
   brandingPublicRouter,
@@ -47,6 +50,18 @@ router.use(`${END_POINTS.V1}${END_POINTS.HEALTH}`, healthRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.AUTH}`, authRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, rbacRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, settingsRouter);
+
+// M10 — the audit trail, read-only. Mounted on the shared /admin prefix like
+// the three above; its guards are bound to /audit, not to the router, so it
+// cannot 403 a request that belongs to one of them.
+router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, auditRouter);
+
+// M10 — the work-queue counts behind the admin landing page.
+router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, dashboardRouter);
+
+// M10 — reports. `report.view` to read, `report.export` to download; both are
+// bound to /reports, not to the router, for the same reason as audit above.
+router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, reportRouter);
 // The logo and logo mark, unauthenticated — the login screen and the invoice
 // header both need them and neither has a session. Only those two images are
 // reachable; see `branding.service.ts`.

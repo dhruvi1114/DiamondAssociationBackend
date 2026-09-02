@@ -363,6 +363,7 @@ mastersAdminRouter.delete(
 export const mastersPublicRouter = Router();
 
 mastersPublicRouter.get(END_POINTS.MEMBERSHIP, controller.publicCatalogue);
+mastersPublicRouter.get(END_POINTS.MEMBERSHIP_PLANS, controller.publicPlans);
 mastersPublicRouter.get(END_POINTS.REGISTRATION_OPTIONS, controller.registrationOptions);
 mastersPublicRouter.get(END_POINTS.DOCUMENT_CHECKLIST, controller.publicDocumentChecklist);
 mastersPublicRouter.get(

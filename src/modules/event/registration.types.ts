@@ -118,27 +118,65 @@ export type RejectPaymentInput = z.infer<typeof rejectPaymentSchema>;
  * invoice, not because the event needs them.
  */
 export const registerAsGuestSchema = z.object({
+  /*
+    The booker: who is billed, and who the association writes to. Not
+    necessarily anybody who turns up — a secretary books three directors and
+    attends none of it, so this person appears in `attendees` only if they put
+    themselves there.
+  */
   full_name: z.string().trim().min(2).max(150),
   designation: z.string().trim().max(100).optional(),
   company_name: z.string().trim().max(200).optional(),
   email: z.string().trim().toLowerCase().email().max(200),
   phone: z.string().trim().min(6).max(20),
+  /*
+    The billing block, all of it required for a guest.
+
+    A member's invoice is addressed from a profile the association has already
+    approved; a guest's has nothing behind it, so anything missing here is a
+    detail somebody has to telephone for before the invoice can go out. Cheaper
+    to ask once, on the form, than to chase a company nobody has a record of.
+
+    A GST number is the exception, and stays optional: a firm under the
+    registration threshold genuinely has none, and so does a foreign delegate.
+    Requiring it would refuse a booking over a number that does not exist.
+  */
   gst_number: z.string().trim().max(20).optional(),
   pan_number: z.string().trim().max(10).optional(),
-  line1: z.string().trim().max(200).optional(),
+  line1: z.string().trim().min(1).max(200),
   line2: z.string().trim().max(200).optional(),
-  city: z.string().trim().max(100).optional(),
-  state: z.string().trim().max(100).optional(),
-  pincode: z.string().trim().max(10).optional(),
-  country: z.string().trim().max(100).default('India'),
-  food_preference: z
-    .union([
-      z.literal(FOOD_PREFERENCE.VEG),
-      z.literal(FOOD_PREFERENCE.NON_VEG),
-      z.literal(FOOD_PREFERENCE.JAIN),
-    ])
-    .optional(),
-  special_requirement: z.string().trim().max(500).optional(),
+  city: z.string().trim().min(1).max(100),
+  state: z.string().trim().min(1).max(100),
+  pincode: z.string().trim().min(1).max(10),
+  country: z.string().trim().min(1).max(100),
+  /*
+    Who actually attends, at the same limits the member booking uses. A
+    non-member firm sending three people is one booking, three names and one
+    invoice — the alternative is three bookings, three invoices and three bank
+    transfers to reconcile for one decision.
+
+    `member_user_id` is omitted rather than ignored: it names a login on a
+    company's team, and a guest booking has neither.
+  */
+  attendees: z
+    .array(
+      attendeeSchema
+        .omit({ member_user_id: true })
+        /*
+          Stricter than a member's delegate, deliberately. A member books people
+          the association already holds records for, so a contact with no email
+          is a gap it can live with. A guest's delegate is known only by what is
+          typed here — no email is no entry code and no way to reach them, and
+          nobody upstream can fill it in.
+        */
+        .extend({
+          designation: z.string().trim().min(1).max(100),
+          email: z.string().trim().toLowerCase().email().max(200),
+          phone: z.string().trim().min(6).max(20),
+        }),
+    )
+    .min(1)
+    .max(50),
   terms_accepted: z.literal(true),
   media_consent: z.boolean().default(false),
 });

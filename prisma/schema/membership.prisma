@@ -217,6 +217,9 @@ model FeeStructure {
   /// Invoice lines priced from this fee, so a charge can always be traced back.
   invoice_items InvoiceItem[]
 
+  /// Applications that picked this plan on the membership page.
+  applications MembershipApplication[]
+
   @@index([category_id, tier_id, fee_type, effective_from(sort: Desc)])
   @@index([is_active, effective_from])
   @@map("FeeStructures")

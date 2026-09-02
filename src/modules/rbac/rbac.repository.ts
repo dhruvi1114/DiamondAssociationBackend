@@ -111,7 +111,8 @@ export interface AdminUserListQuery {
   page: number;
   limit: number;
   search?: string;
-  status?: UserStatus;
+  /** Empty or absent means "no opinion", never "match nothing". */
+  status?: UserStatus[];
 }
 
 export interface AdminUserListResult {
@@ -132,6 +133,7 @@ export const listAdminUsers = async (
 ): Promise<AdminUserListResult> => {
   const offset = (query.page - 1) * query.limit;
   const search = query.search ? `%${query.search}%` : null;
+  const statuses = query.status?.length ? query.status : null;
 
   const rows = await db.$queryRaw<(AdminUserListItem & { total: bigint })[]>(Prisma.sql`
     SELECT au."id",
@@ -153,7 +155,8 @@ export const listAdminUsers = async (
     LEFT JOIN "Roles"          r   ON r."id"              = aur."role_id"
     WHERE au."deletedAt" IS NULL
       AND (${search}::text IS NULL OR au."email"::text ILIKE ${search} OR au."full_name" ILIKE ${search})
-      AND (${query.status ?? null}::"UserStatus" IS NULL OR au."status" = ${query.status ?? null}::"UserStatus")
+      -- A list, not a single value; an empty selection is no filter at all.
+      AND (${statuses}::text[] IS NULL OR au."status"::text = ANY(${statuses}::text[]))
     GROUP BY au."id"
     ORDER BY au."createdAt" DESC
     LIMIT ${query.limit} OFFSET ${offset}
@@ -291,3 +294,51 @@ export const createAdminUser = (
 
 export const findAdminUserByEmail = (db: Db, email: string): Promise<{ id: bigint } | null> =>
   db.adminUser.findFirst({ where: { email, deletedAt: null }, select: { id: true } });
+
+/** Every permission the platform defines, for the matrix's rows. */
+export const listPermissions = (db: Db) =>
+  db.permission.findMany({
+    orderBy: { code: 'asc' },
+    select: { id: true, code: true, description: true },
+  });
+
+export const findRoleByCode = (db: Db, code: string) =>
+  db.role.findFirst({
+    where: { code },
+    select: { id: true, code: true, name: true, is_system: true },
+  });
+
+export const findPermissionsByCodes = (db: Db, codes: string[]) =>
+  db.permission.findMany({ where: { code: { in: codes } }, select: { id: true, code: true } });
+
+export const currentRolePermissions = async (db: Db, roleId: bigint): Promise<string[]> => {
+  const rows = await db.rolePermission.findMany({
+    where: { role_id: roleId },
+    select: { permission: { select: { code: true } } },
+  });
+
+  return rows.map((row) => row.permission.code).sort();
+};
+
+/**
+ * Replace a role's grants with exactly this set.
+ *
+ * Delete-then-insert inside ONE transaction, rather than a diff: the caller
+ * sends the state it wants, and a role that is briefly holding neither the old
+ * set nor the new one — which a non-transactional diff produces — is a role
+ * whose holders lose access mid-request.
+ */
+export const setRolePermissions = async (
+  db: Db,
+  roleId: bigint,
+  permissionIds: bigint[],
+): Promise<void> => {
+  await db.rolePermission.deleteMany({ where: { role_id: roleId } });
+
+  if (permissionIds.length > 0) {
+    await db.rolePermission.createMany({
+      data: permissionIds.map((permission_id) => ({ role_id: roleId, permission_id })),
+      skipDuplicates: true,
+    });
+  }
+};

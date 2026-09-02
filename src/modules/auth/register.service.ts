@@ -291,6 +291,39 @@ export const register = async (
   const categoryIds = input.category_ids.map((id) => BigInt(id));
   const primaryCategoryId = categoryIds[0]!;
 
+  /*
+    The chosen plan, checked before anything is written.
+
+    An id that names a retired or deleted price is refused here rather than
+    stored and discovered at approval — the applicant is in front of us now, and
+    a price that has since been withdrawn is a different figure from the one
+    they were shown. Only a live, category-free "new membership" price qualifies,
+    which is exactly the set the membership page offers.
+  */
+  let feeStructureId: bigint | null = null;
+
+  if (input.fee_structure_id) {
+    const chosen = BigInt(input.fee_structure_id);
+    const now = new Date();
+    const plan = await prisma.feeStructure.findFirst({
+      where: {
+        id: chosen,
+        deletedAt: null,
+        is_active: true,
+        fee_type: 'NEW_MEMBERSHIP',
+        category_id: null,
+        tier_id: null,
+        effective_from: { lte: now },
+        OR: [{ effective_to: null }, { effective_to: { gte: now } }],
+      },
+      select: { id: true },
+    });
+
+    if (!plan) throw conflict('masters.noFeeConfigured');
+
+    feeStructureId = plan.id;
+  }
+
   const [companyType, country, state, city, categories] = await Promise.all([
     prisma.companyType.findFirst({
       where: { id: companyTypeId, deletedAt: null, is_active: true },
@@ -483,6 +516,7 @@ export const register = async (
         member_id: member.id,
         category_id: primaryCategoryId,
         tier_id: null,
+        fee_structure_id: feeStructureId,
         company_name: input.company_name,
         legal_name: null,
         business_type: null,

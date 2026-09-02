@@ -7,7 +7,7 @@ import { prisma } from '@db/prisma';
 import { writeAudit } from '@helpers/audit';
 import { SUPER_ADMIN_ROLE } from '@middleware/authorize';
 import { revokeAllAuthTokens } from '@modules/auth/auth.repository';
-import { invalidateAdminAccess } from '@modules/rbac/rbac.cache';
+import { clearAdminAccessCache, invalidateAdminAccess } from '@modules/rbac/rbac.cache';
 import * as repo from '@modules/rbac/rbac.repository';
 import type {
   AdminUserDto,
@@ -103,6 +103,118 @@ export const listRoles = async (): Promise<RoleDto[]> => {
  * SUPER_ADMIN *role* is the supported path and is visible in an access review;
  * setting the flag stays a seed/DBA action (rbac.md §8).
  */
+/** Every permission the platform defines — the matrix's rows. */
+export const listPermissions = async (): Promise<
+  { code: string; description: string | null }[]
+> => {
+  const rows = await repo.listPermissions(prisma);
+
+  return rows.map((row) => ({ code: row.code, description: row.description }));
+};
+
+/**
+ * Replace a role's permissions.
+ *
+ * Three guards, and each one exists because the screen that calls this is the
+ * screen that can lock everybody out of itself:
+ *
+ *  - **SUPER_ADMIN cannot be edited.** The role carries a blanket bypass
+ *    (rbac.md §2/§3), so its grant list decides nothing — but emptying it would
+ *    read on the matrix as though it did, and the next person would trust the
+ *    screen over the code.
+ *  - **You cannot edit a role you yourself hold**, unless you are a super
+ *    admin. This is a replace, not a diff, so one careless save strips a role to
+ *    whatever was ticked — and doing that to your OWN role removes your access
+ *    to the screen that would put it back. A super admin is exempt because the
+ *    `is_super_admin` flag bypasses every check, so they cannot lock themselves
+ *    out this way.
+ *
+ *    An earlier version guarded only against removing `rbac.manage` from your
+ *    own role. That guard could essentially never fire: `rbac.manage` is granted
+ *    to SUPER_ADMIN alone (rbac.md §3), and the SUPER_ADMIN role is refused
+ *    above — so it protected nothing while reading as though it did.
+ *  - **A permission code that does not exist is refused**, rather than silently
+ *    dropped. A matrix that accepts a save and then shows fewer ticks than were
+ *    pressed is a screen nobody trusts twice.
+ */
+export const setRolePermissions = async (
+  roleCode: string,
+  codes: string[],
+  actor: Actor & { roles: string[]; isSuperAdmin: boolean },
+): Promise<{ code: string; permissions: string[] }> => {
+  const role = await repo.findRoleByCode(prisma, roleCode);
+
+  if (!role) {
+    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'rbac.roleNotFound' });
+  }
+
+  if (role.code === SUPER_ADMIN_ROLE) {
+    throw new AppError({
+      errorType: ERROR_TYPES.CONFLICT,
+      messageKey: 'rbac.superAdminRoleFixed',
+    });
+  }
+
+  const wanted = [...new Set(codes)];
+  const found = await repo.findPermissionsByCodes(prisma, wanted);
+
+  if (found.length !== wanted.length) {
+    const known = new Set(found.map((row) => row.code));
+
+    throw new AppError({
+      errorType: ERROR_TYPES.INVALID_REQUEST,
+      messageKey: 'rbac.unknownPermission',
+      replacements: { permission: wanted.find((code) => !known.has(code)) ?? '' },
+    });
+  }
+
+  if (actor.roles.includes(role.code) && !actor.isSuperAdmin) {
+    throw new AppError({
+      errorType: ERROR_TYPES.CONFLICT,
+      messageKey: 'rbac.cannotEditOwnRole',
+    });
+  }
+
+  const before = await repo.currentRolePermissions(prisma, role.id);
+
+  await prisma.$transaction(async (tx) => {
+    await repo.setRolePermissions(
+      tx,
+      role.id,
+      found.map((row) => row.id),
+    );
+
+    await writeAudit(tx, {
+      action: AUDIT_ACTIONS.ROLE_PERMISSIONS_UPDATED,
+      entityName: 'Roles',
+      entityId: role.id,
+      // Only the codes, and only the two sets — enough to answer "who widened
+      // this role and when" without copying the whole permission table.
+      before: { permissions: before },
+      after: { permissions: wanted.sort() },
+      actorType: ACTOR_TYPES.ADMIN,
+      actorId: actor.id,
+      ip: actor.ip,
+      userAgent: actor.userAgent,
+      requestId: actor.requestId,
+    });
+  });
+
+  /*
+    Every holder of this role has a cached permission set that is now wrong, and
+    this module caches by ADMIN, not by role — so there is no list of exactly who
+    to invalidate without a second query. The whole cache is cleared instead.
+
+    Cheap and correct: a role's grants change rarely, the cache refills on the
+    next request per admin, and the alternative — leaving stale sets in place
+    until the TTL — means a permission you just revoked keeps working for
+    minutes.
+  */
+  clearAdminAccessCache();
+
+  return { code: role.code, permissions: wanted.sort() };
+};
+
 export const createAdminUser = async (
   input: CreateAdminUserInput,
   actor: Actor,

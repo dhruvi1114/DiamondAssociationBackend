@@ -179,6 +179,10 @@ model Refund {
 
   @@index([payment_id])
   @@index([status, createdAt(sort: Desc)])
+  /// Declared to match what `20260902060000_refund_finalised_by` already created in raw SQL.
+  /// Without it the schema and the database disagree, and Prisma writes a DROP for this index
+  /// into the NEXT migration anyone generates — whatever that migration is actually about.
+  @@index([finalised_by_admin_id])
   @@map("Refunds")
 }
 

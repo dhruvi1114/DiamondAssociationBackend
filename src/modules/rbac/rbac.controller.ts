@@ -85,6 +85,38 @@ export const revokeRole = handler(async (req, res) => {
   });
 });
 
+/** `GET /admin/permissions` — every permission the platform defines. */
+export const listPermissions = handler(async (_req, res) => {
+  const result = await service.listPermissions();
+
+  handleApiResponse(res, { responseType: RES_STATUS.GET, data: result });
+});
+
+/**
+ * `PATCH /admin/roles/:roleCode/permissions` — replace a role's grants.
+ *
+ * The whole set, not a diff. The screen is a matrix of tick boxes, and sending
+ * the state the admin is looking at cannot drift from it the way a sequence of
+ * add/remove calls can.
+ */
+export const setRolePermissions = handler(async (req, res) => {
+  const result = await service.setRolePermissions(
+    req.params.roleCode as string,
+    (req.body as { permission_codes: string[] }).permission_codes,
+    {
+      ...actor(req),
+      roles: req.actor?.roles ?? [],
+      isSuperAdmin: Boolean(req.actor?.isSuperAdmin),
+    },
+  );
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'rbac.rolePermissionsUpdated',
+    data: result,
+  });
+});
+
 export const listRoles = handler(async (_req, res) => {
   const result = await service.listRoles();
 

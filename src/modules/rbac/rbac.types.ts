@@ -17,6 +17,26 @@ const email = z
   .email('validation.invalidEmail')
   .transform((value) => value.toLowerCase());
 
+/**
+ * A repeated filter arrives as `?status=A,B`. Split, trim and drop blanks, so a
+ * trailing comma or an empty selection is an absent filter rather than a 422 —
+ * the same helper shape the member and invoice lists use, so the admin app's
+ * filter panel can be a `MultiSelect` here like it is everywhere else.
+ */
+const csv = <T extends z.ZodTypeAny>(item: T) =>
+  z
+    .string()
+    .optional()
+    .transform((value) =>
+      value
+        ? value
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean)
+        : undefined,
+    )
+    .pipe(z.array(item).nonempty().optional());
+
 const roleCode = z
   .string({ required_error: 'rbac.roleNotFound' })
   .trim()
@@ -34,7 +54,8 @@ export const listAdminUsersSchema = z.object({
     .default(20)
     .transform((value) => Math.min(value, 100)),
   search: z.string().trim().min(1).max(150).optional(),
-  status: z.nativeEnum(UserStatus).optional(),
+  /** A list, not one value: "active OR inactive" is a real question to ask. */
+  status: csv(z.nativeEnum(UserStatus)),
 });
 
 export const createAdminUserSchema = z.object({
@@ -104,4 +125,24 @@ export interface RoleDto {
   description: string | null;
   is_system: boolean;
   permissions: string[];
+}
+
+export const roleCodeParamSchema = z.object({ roleCode });
+
+/**
+ * The permissions a role should hold — the whole set, not a diff.
+ *
+ * A replace rather than add/remove because the screen is a matrix: the admin
+ * ticks and unticks boxes and presses Save, and sending "the state I want"
+ * cannot drift from what they are looking at the way a sequence of deltas can.
+ */
+export const setRolePermissionsSchema = z.object({
+  permission_codes: z.array(z.string().trim().min(1).max(80)).max(200),
+});
+
+export type SetRolePermissionsInput = z.infer<typeof setRolePermissionsSchema>;
+
+export interface PermissionDto {
+  code: string;
+  description: string | null;
 }

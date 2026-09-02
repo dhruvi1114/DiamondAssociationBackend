@@ -144,3 +144,62 @@ model JobRun {
   @@index([job_name, started_at(sort: Desc)])
   @@map("JobRuns")
 }
+
+/// One report that somebody ran. The result is stored rather than recomputed: a report is a
+/// historical record, and the whole point of saving it is that it still says the same thing
+/// next month, after a category has been renamed or a company terminated.
+model GeneratedReport {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Which of the four reports this is: members, revenue, renewals or events. Constrained by
+  /// a CHECK rather than an enum, so adding a fifth is a migration against one table.
+  report_type String @db.VarChar(40)
+
+  /// What the person called it. Suggested from the filters, editable before generating.
+  report_name String @db.VarChar(200)
+
+  /// Lower bound of the report's date range, or NULL where the report takes none.
+  from_date DateTime? @db.Date
+
+  /// Upper bound, an inclusive whole day.
+  to_date DateTime? @db.Date
+
+  /// The filters that produced this result, as {id, name} pairs keyed by filter. Names are
+  /// stored beside ids deliberately: an id-only filter becomes unreadable the moment a
+  /// category or a company is renamed, and the saved numbers stop being explainable.
+  filters Json @default("{}")
+
+  /// Whether the row-level breakdown was collected. Decides whether the download carries a
+  /// Detail sheet.
+  include_details Boolean @default(false)
+
+  /// The frozen result: { summary: {...}, detail: [...] or null, row_count: n }.
+  report_data Json @default("{}")
+
+  /// queued, running, ready or failed. Only ready and failed are written today; the other two
+  /// are in the CHECK from the start because adding a value to a constraint later is a second
+  /// migration against the same table, and background generation is a decided future.
+  status String @default("ready") @db.VarChar(20)
+
+  /// How many detail rows matched, whether or not they were stored. Kept even for a report
+  /// generated without detail, so a later run is a decision made with the size in hand.
+  row_count BigInt @default(0)
+
+  /// Why it failed, for a failed row. NULL otherwise.
+  error_message String? @db.Text
+
+  /// AdminUsers.id. ON DELETE RESTRICT: a report must never lose the person who ran it.
+  generated_by BigInt
+
+  /// Row creation timestamp (UTC) -- when the report was run.
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// The staff member who ran it.
+  admin_user AdminUser @relation(fields: [generated_by], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([report_type, createdAt(sort: Desc)])
+  @@index([generated_by, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("GeneratedReports")
+}

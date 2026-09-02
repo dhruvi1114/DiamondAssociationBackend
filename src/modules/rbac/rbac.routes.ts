@@ -7,6 +7,8 @@ import {
   assignRoleSchema,
   createAdminUserSchema,
   listAdminUsersSchema,
+  roleCodeParamSchema,
+  setRolePermissionsSchema,
   updateAdminUserSchema,
 } from '@modules/rbac/rbac.types';
 
@@ -46,6 +48,23 @@ rbacRouter.use('/roles', ...superAdminOnly);
 rbacRouter.use('/admin-users', ...superAdminOnly);
 
 rbacRouter.get('/roles', controller.listRoles);
+
+/**
+ * The permission editor (M10, screen A-31).
+ *
+ * Behind the same three-part guard as everything else here, and deliberately so:
+ * this is the endpoint that can widen any role, so granting it to anyone but a
+ * super admin would BE the escalation it exists to control.
+ */
+rbacRouter.use('/permissions', ...superAdminOnly);
+
+rbacRouter.get('/permissions', controller.listPermissions);
+
+rbacRouter.patch(
+  '/roles/:roleCode/permissions',
+  validateRequest({ params: roleCodeParamSchema, body: setRolePermissionsSchema }),
+  controller.setRolePermissions,
+);
 
 rbacRouter.get(
   '/admin-users',

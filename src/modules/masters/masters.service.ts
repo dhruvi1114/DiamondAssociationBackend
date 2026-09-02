@@ -471,6 +471,50 @@ export const resolveFee = async (params: {
   };
 };
 
+/**
+ * The price the applicant actually chose, priced the same way as any other.
+ *
+ * `resolveFee` answers "what would we charge for this category today"; this
+ * answers "what did this person agree to pay". They exist side by side because
+ * a plan picked in March and approved in June must be honoured at March's
+ * figure — the same rule the event booking already keeps, where the price is
+ * fixed when you book rather than when you pay.
+ *
+ * Still refuses rather than inventing a number. A plan the admin has since
+ * deleted or retired throws, and the approval is blocked and names the problem,
+ * exactly as a missing category price does.
+ */
+export const feeById = async (feeStructureId: bigint) => {
+  const row = await prisma.feeStructure.findFirst({
+    where: { id: feeStructureId, deletedAt: null },
+    include: {
+      category: { select: { name: true } },
+      tier: { select: { name: true } },
+    },
+  });
+
+  if (!row) throw conflict('masters.noFeeConfigured');
+
+  const taxAmount = row.amount.mul(row.tax_rate).div(100).toDecimalPlaces(2);
+
+  return {
+    fee_structure_id: row.id.toString(),
+    category_id: row.category_id?.toString() ?? null,
+    category_name: row.category?.name ?? null,
+    tier_id: row.tier_id?.toString() ?? null,
+    tier_name: row.tier?.name ?? null,
+    fee_type: row.fee_type,
+    amount: row.amount.toFixed(2),
+    tax_rate: row.tax_rate.toFixed(2),
+    tax_amount: taxAmount.toFixed(2),
+    total_amount: row.amount.add(taxAmount).toFixed(2),
+    currency: row.currency,
+    duration_months: row.duration_months,
+    effective_from: row.effective_from.toISOString().slice(0, 10),
+    effective_to: row.effective_to?.toISOString().slice(0, 10) ?? null,
+  };
+};
+
 /* -------------------------------------------------------------------------- */
 /* Document types                                                              */
 /* -------------------------------------------------------------------------- */
@@ -592,6 +636,62 @@ export const deleteDocumentType = async (id: bigint, actor: Actor) => {
 /* -------------------------------------------------------------------------- */
 /* Public catalogue                                                            */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * The membership plans on offer today (C-03).
+ *
+ * One row per published "new membership" price that is live on this date, and
+ * the term is what tells them apart: 12 months at one figure, 24 at another, 36
+ * at a third. The applicant picks one and the id travels with them to signup, so
+ * the figure on the card is the figure on the invoice.
+ *
+ * Category-specific prices are excluded rather than merged in. A plan the whole
+ * public may choose cannot be one that only members of a particular class are
+ * eligible for, and showing a price nobody can select is worse than showing one
+ * fewer.
+ *
+ * The field list is an explicit allowlist: `notes` is internal, and the
+ * effective dates are the association's own scheduling rather than the
+ * applicant's business.
+ */
+export const publicPlans = async (onDate = new Date()) => {
+  const rows = await prisma.feeStructure.findMany({
+    where: {
+      deletedAt: null,
+      is_active: true,
+      fee_type: 'NEW_MEMBERSHIP',
+      category_id: null,
+      tier_id: null,
+      effective_from: { lte: onDate },
+      OR: [{ effective_to: null }, { effective_to: { gte: onDate } }],
+    },
+    orderBy: [{ duration_months: 'asc' }, { amount: 'asc' }],
+    select: {
+      id: true,
+      amount: true,
+      tax_rate: true,
+      currency: true,
+      duration_months: true,
+    },
+  });
+
+  return rows.map((row) => {
+    // Rounded at the line, exactly as the invoice does it, so the card and the
+    // bill agree to the paisa rather than to within a rupee.
+    const taxAmount = row.amount.mul(row.tax_rate).div(100).toDecimalPlaces(2);
+
+    return {
+      id: row.id.toString(),
+      // Money leaves as a 2-decimal string, never a JSON number (ADR-007).
+      amount: row.amount.toFixed(2),
+      tax_rate: row.tax_rate.toFixed(2),
+      tax_amount: taxAmount.toFixed(2),
+      total_amount: row.amount.add(taxAmount).toFixed(2),
+      currency: row.currency,
+      duration_months: row.duration_months,
+    };
+  });
+};
 
 /**
  * What an anonymous visitor sees on the membership page (C-03).

@@ -39,6 +39,7 @@ export const END_POINTS = {
   DOCUMENT_TYPES: '/document-types',
   DOCUMENT_CHECKLIST: '/document-checklist',
   MEMBERSHIP: '/membership',
+  MEMBERSHIP_PLANS: '/membership-plans',
   REGISTRATION_OPTIONS: '/registration-options',
   REGISTRATION_CONSENT: '/registration-consent',
   // M5 — registration masters

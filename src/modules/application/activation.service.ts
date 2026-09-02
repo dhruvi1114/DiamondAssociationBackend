@@ -204,11 +204,21 @@ export const activateApprovedApplication = async (
   // and change nothing — a ₹0 invoice raised because the price list was empty is
   // far worse than a blocked approval that names the missing configuration
   // (billing-payment.md §2).
-  const fee = await masters.resolveFee({
-    categoryId: application.category_id,
-    tierId: application.tier_id,
-    feeType: 'NEW_MEMBERSHIP',
-  });
+  /*
+    The plan the applicant chose, when they chose one.
+
+    Falling back to `resolveFee` is not a nicety: every application already in
+    flight was created before plans existed and carries no choice, and staff
+    entering one on an applicant's behalf still have none to record. Those price
+    exactly as they did before this column existed.
+  */
+  const fee = application.fee_structure_id
+    ? await masters.feeById(application.fee_structure_id)
+    : await masters.resolveFee({
+        categoryId: application.category_id,
+        tierId: application.tier_id,
+        feeType: 'NEW_MEMBERSHIP',
+      });
 
   /* --- 2. the member becomes real ---------------------------------------- */
 
