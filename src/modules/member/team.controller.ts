@@ -77,17 +77,46 @@ export const listTeam = handler(async (req, res) => {
   });
 });
 
-/** `POST /members/me/team` — invite a colleague. Owner only. */
-export const inviteTeamMember = handler(async (req, res) => {
+/**
+ * `POST /members/me/contacts/:id/access` — give an existing contact a login.
+ *
+ * The people list is Contacts; access is granted onto somebody already on it,
+ * which is why this takes a contact id and not a name and an email.
+ */
+export const grantContactAccess = handler(async (req, res) => {
   const context = await teamContext(req);
 
   requireOwner(context);
 
-  const row = await service.inviteTeamMember(req.body as never, context, contextFromRequest(req));
+  const row = await service.grantContactAccess(
+    BigInt(req.params.id),
+    context,
+    contextFromRequest(req),
+  );
 
   handleApiResponse(res, {
     responseType: RES_STATUS.CREATE,
     messageKey: 'member.teamInvited',
+    data: { row },
+  });
+});
+
+/** `PATCH /members/me/contacts/:id/access` — switch that person's login on or off. Owner only. */
+export const setContactAccess = handler(async (req, res) => {
+  const context = await teamContext(req);
+
+  requireOwner(context);
+
+  const row = await service.setContactAccess(
+    BigInt(req.params.id),
+    req.body as never,
+    context,
+    contextFromRequest(req),
+  );
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.UPDATE,
+    messageKey: 'member.teamStatusChanged',
     data: { row },
   });
 });

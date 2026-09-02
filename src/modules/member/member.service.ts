@@ -107,7 +107,7 @@ export const getOrCreateOwnMember = async (userId: bigint, actor: Actor) => {
   // display name.
   const user = await prisma.user.findFirst({
     where: { id: userId, deletedAt: null },
-    select: { id: true, full_name: true },
+    select: { id: true, full_name: true, email: true, phone: true },
   });
   if (!user) throw notFound('auth.userNotFound');
 
@@ -130,7 +130,10 @@ export const getOrCreateOwnMember = async (userId: bigint, actor: Actor) => {
   }
 };
 
-const provisionMember = async (user: { id: bigint; full_name: string }, actor: Actor) =>
+const provisionMember = async (
+  user: { id: bigint; full_name: string; email: string; phone: string | null },
+  actor: Actor,
+) =>
   prisma.$transaction(async (tx) => {
     const created = await repo.createMember(tx, {
       primary_user_id: user.id,
@@ -148,6 +151,29 @@ const provisionMember = async (user: { id: bigint; full_name: string }, actor: A
       user_id: user.id,
       member_role: MEMBER_ROLE.OWNER,
       status: MEMBER_USER_STATUS.ACTIVE,
+    });
+
+    /*
+      The owner as a person, not only as a login.
+
+      Before this, signup produced a company and a login and no contact at all,
+      so the one person the association certainly knows about was the one it had
+      not recorded. Nothing could be corrected either — the name shown on the
+      team screen came from `Users.full_name`, which has no edit path, and there
+      was no row to edit in the first place.
+
+      The name starts as the company name, because that is what registration
+      seeds `full_name` from and it is already what was on display. The point is
+      not that it starts right; it is that from here the owner can fix it.
+    */
+    await repo.createContact(tx, {
+      member_id: created.id,
+      user_id: user.id,
+      name: user.full_name,
+      email: user.email,
+      phone: user.phone,
+      // The company's first contact, so nobody else can hold the flag yet.
+      is_primary: true,
     });
 
     await repo.recordStatusChange(tx, {

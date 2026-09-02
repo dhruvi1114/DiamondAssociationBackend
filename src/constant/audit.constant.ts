@@ -243,6 +243,16 @@ export const AUDIT_ACTIONS = {
   /** Staff could not find the money and said why. */
   PAYMENT_SUBMISSION_REJECTED: 'payment_submission.rejected',
 
+  // --- M5: refunds ----------------------------------------------------------
+  /** Staff released a refund for sending. */
+  REFUND_APPROVED: 'refund.approved',
+  /** Staff refused a refund and said why. */
+  REFUND_REJECTED: 'refund.rejected',
+  /** The money actually went back, with the bank's reference. */
+  REFUND_COMPLETED: 'refund.completed',
+  /** The transfer did not go through. */
+  REFUND_FAILED: 'refund.failed',
+
   // --- M9: news -------------------------------------------------------------
   /** A news article was started as a draft. */
   NEWS_CREATED: 'news_article.created',

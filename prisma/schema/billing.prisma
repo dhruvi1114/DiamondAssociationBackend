@@ -138,6 +138,15 @@ model Refund {
   /// Staff account that approved it. NULL while still REQUESTED.
   approved_by_admin_id BigInt?
 
+  /// Staff account that ended it — rejected it, sent it, or marked it failed.
+  ///
+  /// One column rather than three because those three outcomes are mutually
+  /// exclusive: `status` says which of them happened, and three columns that can
+  /// never be populated together would be three chances to disagree about it.
+  /// Kept apart from `updated_by_admin_id`, which is only ever "who touched this
+  /// last" and would be overwritten by any later edit.
+  finalised_by_admin_id BigInt?
+
   /// When the money actually went back.
   processed_at DateTime? @db.Timestamptz(6)
 
@@ -161,6 +170,12 @@ model Refund {
 
   /// The payment being returned.
   payment Payment @relation(fields: [payment_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  /// The three staff accounts a refund names, so the queue can show who did what
+  /// without a second query per row.
+  requested_by AdminUser? @relation("RefundRequestedBy", fields: [requested_by_admin_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+  approved_by  AdminUser? @relation("RefundApprovedBy", fields: [approved_by_admin_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+  finalised_by AdminUser? @relation("RefundFinalisedBy", fields: [finalised_by_admin_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
   @@index([payment_id])
   @@index([status, createdAt(sort: Desc)])

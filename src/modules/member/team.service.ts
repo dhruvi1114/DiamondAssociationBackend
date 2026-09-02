@@ -4,10 +4,11 @@ import { prisma } from '@db/prisma';
 import { writeAudit } from '@helpers/audit';
 import { issueInitialPasswordLink } from '@modules/auth/auth.service';
 import { MEMBER_ROLE, MEMBER_USER_STATUS } from '@modules/member/team.constants';
+import * as memberRepo from '@modules/member/member.repository';
 import * as repo from '@modules/member/team.repository';
 import { AppError } from '@utils/appError';
 import type { TeamMemberRow } from '@modules/member/team.repository';
-import type { InviteTeamMemberInput, TeamStatusInput } from '@modules/member/team.types';
+import type { TeamStatusInput } from '@modules/member/team.types';
 
 /**
  * The company's team roster.
@@ -49,24 +50,54 @@ export interface TeamRequestContext {
 const INVITE_EXPIRY_HOURS = 48;
 
 /**
- * Invite a colleague onto the company roster.
+ * Give an existing contact a login.
  *
- * The login is created without a password and the invitee sets one through the
- * existing `setInitialPassword` link. Reusing that path rather than inventing an
- * invite-token flow leaves one password-setting code path, one expiry rule and
- * one place a token could be replayed, instead of two of each.
+ * The people list is `MemberContacts`: one row per person, holding the name,
+ * job title, email and phone. Access is granted onto a person who is already
+ * recorded, rather than by typing them a second time into a separate team form.
+ * That is the whole point of the merge — an accountant who must receive
+ * invoices and must never reach the portal is simply a contact nobody granted.
+ *
+ * The login itself is still a `MemberUsers` row. Members edit their contacts
+ * freely, so the table that decides who may sign in is deliberately not the
+ * table they edit.
  */
-export const inviteTeamMember = async (
-  input: InviteTeamMemberInput,
+export const grantContactAccess = async (
+  contactId: bigint,
   context: TeamContext,
   request: TeamRequestContext,
 ) => {
-  const existing = await repo.findUserByEmail(prisma, input.email);
+  const contact = await memberRepo.findContact(prisma, context.memberId, contactId);
+
+  // Scoped to the caller's company, so another firm's contact is "not found"
+  // rather than "forbidden" — a 403 would confirm the row exists.
+  if (!contact) {
+    throw new AppError({
+      errorType: ERROR_TYPES.NOT_FOUND,
+      messageKey: 'member.contactNotFound',
+    });
+  }
+
+  if (contact.user_id) {
+    throw new AppError({
+      errorType: ERROR_TYPES.CONFLICT,
+      messageKey: 'member.teamEmailAlreadyOnTeam',
+    });
+  }
+
+  // An email is optional on a contact and mandatory for a login: it is both the
+  // address the invitation goes to and the identifier they sign in with.
+  if (!contact.email) {
+    throw new AppError({
+      errorType: ERROR_TYPES.VALIDATION_ERROR,
+      messageKey: 'member.contactEmailRequiredForAccess',
+    });
+  }
+
+  const email = contact.email.toLowerCase();
+  const existing = await repo.findUserByEmail(prisma, email);
 
   if (existing) {
-    // Distinguish the two cases: "already on your team" is reassuring, "already
-    // in use" tells the owner the address belongs somewhere else entirely. One
-    // generic message would leave them retrying the same thing.
     const onThisTeam = await repo.findTeamRowByUserId(prisma, context.memberId, existing.id);
 
     throw new AppError({
@@ -76,10 +107,7 @@ export const inviteTeamMember = async (
   }
 
   return prisma.$transaction(async (tx) => {
-    const user = await repo.createUser(tx, {
-      email: input.email,
-      full_name: input.full_name,
-    });
+    const user = await repo.createUser(tx, { email, full_name: contact.name });
 
     const row = await repo.createTeamRow(tx, {
       member_id: context.memberId,
@@ -93,13 +121,17 @@ export const inviteTeamMember = async (
     await repo.createInvite(tx, {
       member_id: context.memberId,
       user_id: user.id,
-      email: input.email,
-      full_name: input.full_name,
-      designation: input.designation ?? null,
+      email,
+      full_name: contact.name,
+      designation: contact.designation,
       invited_by_user_id: context.userId,
       expires_at: new Date(Date.now() + INVITE_EXPIRY_HOURS * 3_600_000),
       created_by_user_id: context.userId,
     });
+
+    // The link that makes the two rows one person. Without it the next list
+    // would show the contact and the login as two separate people again.
+    await memberRepo.updateContact(tx, contact.id, { user: { connect: { id: user.id } } });
 
     await issueInitialPasswordLink(tx, user, request);
 
@@ -109,23 +141,55 @@ export const inviteTeamMember = async (
       entityId: row.id,
       actorType: ACTOR_TYPES.MEMBER,
       actorId: context.userId,
-      after: { email: input.email, member_role: MEMBER_ROLE.TEAM },
+      after: { email, member_role: MEMBER_ROLE.TEAM, contact_id: contact.id.toString() },
       ip: request.ip,
       userAgent: request.userAgent,
       requestId: request.requestId,
     });
 
     return {
-      id: row.id.toString(),
+      id: contact.id.toString(),
       user_id: user.id.toString(),
-      full_name: input.full_name,
-      email: input.email,
-      designation: input.designation ?? null,
       member_role: MEMBER_ROLE.TEAM,
-      status: MEMBER_USER_STATUS.INVITED,
-      accepted_at: null,
+      access_status: MEMBER_USER_STATUS.INVITED,
     };
   });
+};
+
+/**
+ * Switch a contact's login on or off.
+ *
+ * Addressed by contact, like granting is, so the whole of a person's access is
+ * managed from the one row that represents them. The owner is refused for the
+ * same reason as ever: only ACTIVE rows resolve a login to its company, so
+ * switching the owner off locks the firm out of its own account with no way
+ * back from the member side.
+ */
+export const setContactAccess = async (
+  contactId: bigint,
+  input: TeamStatusInput,
+  context: TeamContext,
+  request: TeamRequestContext,
+) => {
+  const contact = await memberRepo.findContact(prisma, context.memberId, contactId);
+
+  if (!contact?.user_id) {
+    throw new AppError({
+      errorType: ERROR_TYPES.NOT_FOUND,
+      messageKey: 'member.contactNotFound',
+    });
+  }
+
+  const row = await repo.findTeamRowByUserId(prisma, context.memberId, contact.user_id);
+
+  if (!row) {
+    throw new AppError({
+      errorType: ERROR_TYPES.NOT_FOUND,
+      messageKey: 'member.teamRowNotFound',
+    });
+  }
+
+  return setTeamMemberStatus(row.id, input, context, request);
 };
 
 /**

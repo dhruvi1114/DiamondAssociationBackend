@@ -80,6 +80,9 @@ model User {
   /// Team invitations issued against this login.
   team_invites MemberTeamInvite[] @relation("TeamInviteUser")
 
+  /// The contact rows that point at this login. At most one per company.
+  member_contacts MemberContact[]
+
   @@index([status, createdAt(sort: Desc)])
   @@map("Users")
 }
@@ -157,7 +160,11 @@ model AdminUser {
   approval_actions ApprovalAction[] @relation("ApprovalActor")
 
   /// Invoices this staff member raised by hand.
-  invoices_created Invoice[] @relation("InvoiceCreator")
+  invoices_created  Invoice[] @relation("InvoiceCreator")
+  /// Refunds this account raised, released, or ended.
+  refunds_requested Refund[]  @relation("RefundRequestedBy")
+  refunds_approved  Refund[]  @relation("RefundApprovedBy")
+  refunds_finalised Refund[]  @relation("RefundFinalisedBy")
 
   @@index([status, createdAt(sort: Desc)])
   @@index([created_by_admin_id])

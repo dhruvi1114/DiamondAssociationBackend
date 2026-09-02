@@ -8,6 +8,7 @@ import {
   applicationPublicRouter,
   applicationSuperAdminRouter,
 } from '@modules/application/public.routes';
+import { refundRouter } from '@modules/billing/refund.routes';
 import { directoryRouter } from '@modules/directory/directory.routes';
 import {
   eventAdminRouter,
@@ -94,6 +95,9 @@ router.use(`${END_POINTS.V1}${END_POINTS.DIRECTORY}`, directoryRouter);
 
 // M5 — invoice and receipt PDFs, both audiences.
 router.use(`${END_POINTS.V1}${END_POINTS.INVOICES}`, invoiceRouter);
+
+// The refund queue lives with the other staff billing screens.
+router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, refundRouter);
 
 // M4 — applications, the approval workflow and activation.
 router.use(`${END_POINTS.V1}${END_POINTS.APPLICATIONS}`, applicationRouter);

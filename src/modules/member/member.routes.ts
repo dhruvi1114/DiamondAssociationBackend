@@ -21,7 +21,7 @@ import {
   updateProfileSchema,
 } from '@modules/member/member.types';
 import { verifyDocumentSchema } from '@modules/document/document.types';
-import { inviteTeamMemberSchema, teamStatusSchema } from '@modules/member/team.types';
+import { teamStatusSchema } from '@modules/member/team.types';
 
 /**
  * Uploads are held in memory, not written to a temp path.
@@ -65,11 +65,13 @@ memberRouter.post(
 
 memberRouter.get('/me/team', teamController.listTeam);
 
-memberRouter.post(
-  '/me/team',
-  validateRequest({ body: inviteTeamMemberSchema }),
-  teamController.inviteTeamMember,
-);
+/*
+  There is no POST here any more. Inviting somebody used to mean typing a name
+  and an email into a team form, which produced a second record of a person the
+  company had usually already entered as a contact. Access is now granted onto a
+  contact -- see POST /me/contacts/:id/access above. GET stays: the event
+  attendee picker reads the roster to offer who can be booked onto a seat.
+*/
 
 memberRouter.patch(
   '/me/team/:id/status',
@@ -78,6 +80,21 @@ memberRouter.patch(
 );
 
 memberRouter.get('/me/contacts', controller.listContacts);
+
+// Access is granted onto a person already on the contacts list, so this hangs
+// off a contact rather than being its own "invite somebody" form.
+memberRouter.post(
+  '/me/contacts/:id/access',
+  validateRequest({ params: idParamSchema }),
+  teamController.grantContactAccess,
+);
+
+memberRouter.patch(
+  '/me/contacts/:id/access',
+  validateRequest({ params: idParamSchema, body: teamStatusSchema }),
+  teamController.setContactAccess,
+);
+
 memberRouter.post('/me/contacts', validateRequest({ body: contactSchema }), controller.addContact);
 memberRouter.patch(
   '/me/contacts/:id',

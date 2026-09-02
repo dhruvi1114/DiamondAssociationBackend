@@ -334,11 +334,42 @@ export const listInvoices = (
 
 /* --- contacts -------------------------------------------------------------- */
 
-export const listContacts = (db: Db, memberId: bigint) =>
-  db.memberContact.findMany({
+/**
+ * The company's people, each with whatever portal access they have.
+ *
+ * The access state is read from `MemberUsers` rather than stored here. One
+ * table decides whether somebody can sign in, and it is not the one members
+ * edit freely — a contact carries who a person is, never what they may do.
+ */
+export const listContacts = async (db: Db, memberId: bigint) => {
+  const contacts = await db.memberContact.findMany({
     where: { member_id: memberId, deletedAt: null },
     orderBy: [{ is_primary: 'desc' }, { name: 'asc' }],
   });
+
+  const linked = contacts.map((row) => row.user_id).filter((id): id is bigint => id !== null);
+
+  const logins = linked.length
+    ? await db.memberUser.findMany({
+        where: { member_id: memberId, user_id: { in: linked } },
+        select: { user_id: true, member_role: true, status: true },
+      })
+    : [];
+
+  const byUser = new Map(logins.map((row) => [row.user_id.toString(), row]));
+
+  return contacts.map((row) => {
+    const login = row.user_id ? byUser.get(row.user_id.toString()) : undefined;
+
+    return {
+      ...row,
+      // Null, not a made-up status, when the person has no login at all. That is
+      // the ordinary case here, not a missing value.
+      member_role: login?.member_role ?? null,
+      access_status: login?.status ?? null,
+    };
+  });
+};
 
 export const findContact = (db: Db, memberId: bigint, id: bigint) =>
   db.memberContact.findFirst({ where: { id, member_id: memberId, deletedAt: null } });

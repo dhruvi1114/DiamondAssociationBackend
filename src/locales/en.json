@@ -72,6 +72,7 @@
     "contactUpdated": "Contact updated",
     "contactRemoved": "Contact removed",
     "contactNotFound": "That contact no longer exists",
+    "contactEmailRequiredForAccess": "Add an email address to this contact before giving them a login",
     "lastContact": "This is your only contact. Add another before removing this one, so the association still has someone to reach.",
     "addressAdded": "Address added",
     "addressUpdated": "Address updated",
@@ -164,7 +165,13 @@
     "invoiceCancelled": "Invoice cancelled",
     "invoiceAlreadyPaid": "This invoice is already paid",
     "feeNotConfigured": "No active fee is configured for this category. Please contact the association office",
-    "amountMismatch": "The amount does not match the invoice balance"
+    "amountMismatch": "The amount does not match the invoice balance",
+    "refundNotFound": "That refund no longer exists",
+    "refundWrongStatus": "This refund has already moved on. Reload the queue to see where it is now",
+    "refundApproved": "Refund approved and ready to send",
+    "refundRejected": "Refund rejected",
+    "refundCompleted": "Refund marked as sent",
+    "refundFailed": "Refund marked as failed"
   },
   "payment": {
     "notFound": "Payment not found",
