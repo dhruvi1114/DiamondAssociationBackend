@@ -60,8 +60,8 @@ export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
  */
 export const MAX_ATTACHMENTS = 6;
 
-/** The homepage Newsroom block. Four cards, as designed. */
-export const HOMEPAGE_LIMIT = 4;
+/** The homepage Newsroom block. Six cards — two rows of three. */
+export const HOMEPAGE_LIMIT = 6;
 
 /** Listing page size, and the ceiling a caller may ask for. */
 export const NEWS_PAGE_SIZE = 12;

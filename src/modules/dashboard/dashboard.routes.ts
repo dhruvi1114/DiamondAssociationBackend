@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { authenticateAdmin, authorize } from '@middleware';
+import { authenticateAdmin, authorize, validateRequest } from '@middleware';
+import { dashboardFilterSchema } from '@modules/dashboard/dashboard.filters';
 import * as controller from '@modules/dashboard/dashboard.controller';
 
 /**
@@ -22,4 +23,20 @@ dashboardRouter.get(
   authenticateAdmin,
   authorize('dashboard.view'),
   controller.getSummary,
+);
+
+dashboardRouter.get(
+  `${DASHBOARD}/charts`,
+  authenticateAdmin,
+  authorize('dashboard.view'),
+  validateRequest({ query: dashboardFilterSchema }),
+  controller.getCharts,
+);
+
+dashboardRouter.get(
+  `${DASHBOARD}/kpis`,
+  authenticateAdmin,
+  authorize('dashboard.view'),
+  validateRequest({ query: dashboardFilterSchema }),
+  controller.getKpis,
 );
