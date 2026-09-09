@@ -88,6 +88,13 @@ export const registrationFields = {
     have nothing to pass. Both still price the old way at approval.
   */
   fee_structure_id: z.string().regex(/^\d+$/, 'validation.invalidId').optional(),
+
+  /*
+    The same choice, made on the redesigned membership page (M2 redesign). Separate from
+    `fee_structure_id` because the two price lists coexist until the old screen retires; a signup
+    carries at most one of them, and the newer wins if somehow both arrive.
+  */
+  fee_plan_id: z.string().regex(/^\d+$/, 'validation.invalidId').optional(),
 } as const;
 
 /**

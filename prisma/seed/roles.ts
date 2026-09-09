@@ -68,6 +68,10 @@ const ROLES: RoleSeed[] = [
       'event.attendance',
       'news.view',
       'news.manage',
+      // Contact enquiries are membership's work: most people who write in are
+      // asking how to join. Accounts and approvers have no use for them.
+      'enquiry.view',
+      'enquiry.manage',
       'notice.view',
       'notice.manage',
       'notice.publish',

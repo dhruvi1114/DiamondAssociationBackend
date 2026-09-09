@@ -269,6 +269,10 @@
     "tooManyAttachments": "An article can carry at most {{max}} attachments"
   },
   "communication": {
+    "enquiryNotFound": "That enquiry no longer exists",
+    "enquiryReceived": "Thank you — your message has reached the association office",
+    "enquiryHandled": "Enquiry marked as handled",
+    "enquiryReopened": "Enquiry put back on the queue",
     "noticeNotFound": "Notice not found",
     "noticeCreated": "Notice created",
     "noticePublished": "Notice published to {{count}} recipients",
@@ -418,7 +422,18 @@
     "cityDeleted": "City deleted",
     "cityInUse": "This city is used by {{addresses}} address(es). Deactivate it instead",
     "duplicateCode": "A row with that code already exists",
-    "duplicateName": "A row with that name already exists here"
+    "duplicateName": "A row with that name already exists here",
+    "feePlanStructureNotFound": "That price list no longer exists. It may have been deleted while this screen was open.",
+    "feePlanStructureCreated": "Price list published.",
+    "feePlanStructureUpdated": "Price list updated.",
+    "feePlanStructureRetired": "Price list retired. Members already on its plans keep renewing from them.",
+    "feePlanStructureRestored": "Price list is back on the website.",
+    "feePlanAtLeastOne": "Switch on at least one billing cycle — a list with no live plan shows nothing on the website",
+    "feePlanDuplicateCycle": "A billing cycle can only appear once in a price list",
+    "feePlanCycleAlreadyLive": "Another price list is already live for this billing cycle. Close or retire it before publishing a second price for the same cycle.",
+    "feePlanOverlap": "Two live prices would cover the same billing cycle on the same dates. Close the current one first.",
+    "feePlanScopeRequired": "This price has already been invoiced, so it cannot be changed in place. Choose whether existing members move to the new renewal price or stay on the one they are on.",
+    "feePlanEffectiveFromTooEarly": "The new price must start after the price it replaces began."
   },
   "report": {
     "notFound": "That report does not exist",

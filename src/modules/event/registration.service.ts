@@ -9,6 +9,7 @@ import { writeAudit } from '@helpers/audit';
 import { allocateInvoiceNumber, generateDocumentNumber } from '@helpers/documentNumber';
 import { getNumericSetting, SETTING_KEYS } from '@helpers/settings';
 import { EVENT_STATUS } from '@modules/event/event.constants';
+import { bannerUrl } from '@modules/event/event.media';
 import * as eventRepo from '@modules/event/event.repository';
 import { priceBooking } from '@modules/event/registration.pricing';
 import {
@@ -979,7 +980,9 @@ export const getBookingSummary = async (id: bigint) => {
       event: { select: { title: true, slug: true, start_at: true, venue_name: true, city: true } },
       attendees: { orderBy: { id: 'asc' } },
       invoice: {
-        select: { invoice_number: true, status: true, total_amount: true, due_date: true },
+        /* `id` because the PDF routes are keyed by it — the number is what a
+           person quotes, not what the download endpoint takes. */
+        select: { id: true, invoice_number: true, status: true, total_amount: true, due_date: true },
       },
     },
   });
@@ -999,6 +1002,7 @@ export const getBookingSummary = async (id: bigint) => {
     expires_at: booking.expires_at,
     invoice: booking.invoice
       ? {
+          id: booking.invoice.id.toString(),
           invoice_number: booking.invoice.invoice_number,
           status: booking.invoice.status,
           total_amount: booking.invoice.total_amount.toFixed(2),
@@ -1059,7 +1063,22 @@ export const listMyBookings = async (memberId: bigint) => {
     orderBy: { registered_at: 'desc' },
     include: {
       event: {
-        select: { title: true, slug: true, start_at: true, venue_name: true, city: true },
+        select: {
+          title: true,
+          slug: true,
+          start_at: true,
+          /* The real end, not a repeat of the start. Without it the card had to
+             pass `start_at` twice and printed "6:41 am – 6:41 am" on every
+             booking ever made. */
+          end_at: true,
+          venue_name: true,
+          city: true,
+          banner_path: true,
+          banner_alt: true,
+          /* Seminar, Conference, Workshop — the association's own classification
+             from the EventTypes master. Optional there, so optional here. */
+          event_type: { select: { name: true } },
+        },
       },
       attendees: {
         orderBy: { id: 'asc' },
@@ -1075,7 +1094,20 @@ export const listMyBookings = async (memberId: bigint) => {
     id: booking.id.toString(),
     registration_code: booking.registration_code,
     status: booking.status,
-    event: booking.event,
+    /* `banner_path` is swapped for `banner_url` here, as the public event
+       endpoints do — a storage key is no use to a browser, and shipping one
+       tells the client about a bucket layout it has no business knowing. */
+    event: {
+      title: booking.event.title,
+      slug: booking.event.slug,
+      start_at: booking.event.start_at,
+      end_at: booking.event.end_at,
+      venue_name: booking.event.venue_name,
+      city: booking.event.city,
+      banner_url: bannerUrl(booking.event.slug, booking.event.banner_path),
+      banner_alt: booking.event.banner_alt,
+      event_type: booking.event.event_type?.name ?? null,
+    },
     seats: booking.attendee_count,
     total_amount: booking.total_amount.toFixed(2),
     expires_at: booking.expires_at,

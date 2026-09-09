@@ -11,6 +11,7 @@ import {
   applicationSuperAdminRouter,
 } from '@modules/application/public.routes';
 import { refundRouter } from '@modules/billing/refund.routes';
+import { contactAdminRouter, contactPublicRouter } from '@modules/contact/contact.routes';
 import { directoryRouter } from '@modules/directory/directory.routes';
 import {
   eventAdminRouter,
@@ -110,6 +111,10 @@ router.use(`${END_POINTS.V1}${END_POINTS.DIRECTORY}`, directoryRouter);
 
 // M5 — invoice and receipt PDFs, both audiences.
 router.use(`${END_POINTS.V1}${END_POINTS.INVOICES}`, invoiceRouter);
+
+// The public contact form, and the queue it feeds.
+router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, contactPublicRouter);
+router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, contactAdminRouter);
 
 // The refund queue lives with the other staff billing screens.
 router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, refundRouter);

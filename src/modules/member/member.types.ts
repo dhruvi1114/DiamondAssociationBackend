@@ -245,3 +245,27 @@ export type ListInvoicesQuery = z.infer<typeof listInvoicesSchema>;
 export type AdminUpdateMemberInput = z.infer<typeof adminUpdateMemberSchema>;
 export type ChangeCategoryInput = z.infer<typeof changeCategorySchema>;
 export type StatusChangeInput = z.infer<typeof statusChangeSchema>;
+
+/**
+ * Query for `GET /members/me/invoices`.
+ *
+ * The member's own list, paginated and searched on the server. It used to ride
+ * along with `GET /members/me`, which meant every profile load carried a year of
+ * invoices and the screen could only ever filter what it already had.
+ */
+export const listOwnInvoicesSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  /** Matches the invoice number. It is the only thing a member searches by. */
+  search: z.string().trim().min(1).max(60).optional(),
+  /** Comma-separated — the control is a MultiSelect. */
+  status: z.string().trim().optional(),
+  type: z.string().trim().optional(),
+  /** Four digits, matched against the issue date. */
+  year: z
+    .string()
+    .regex(/^\d{4}$/)
+    .optional(),
+});
+
+export type ListOwnInvoicesQuery = z.infer<typeof listOwnInvoicesSchema>;

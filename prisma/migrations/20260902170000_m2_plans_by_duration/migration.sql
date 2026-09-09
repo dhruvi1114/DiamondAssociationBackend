@@ -43,3 +43,13 @@ ALTER TABLE "MembershipApplications"
 -- SET NULL rather than RESTRICT; this index keeps that sweep cheap.
 CREATE INDEX "MembershipApplications_fee_structure_id_idx"
   ON "MembershipApplications"("fee_structure_id");
+
+-- ============================================================================
+-- Table & column comments (ADR-013 / database-design.md §I)
+-- Generated from the /// doc-comments in prisma/schema/*.prisma by
+--   npx tsx scripts/emit-db-comments.ts
+-- Added after the fact: this migration shipped without them, which left the
+-- db:check-comments gate red and therefore unable to catch the NEXT omission.
+-- ============================================================================
+
+COMMENT ON COLUMN "MembershipApplications"."fee_structure_id" IS 'FK to FeeStructures.id — the plan the applicant picked on the membership page, so the figure they were shown is the figure they are invoiced. Nullable, and not only for old rows: an application started before the plans existed, or created by staff on the applicant''s behalf, has no choice to record. Activation falls back to resolving a price the old way when this is null, so nothing that worked before stops working. ON DELETE SET NULL: retiring a price must not delete an application, and a null here degrades to that same fallback.';

@@ -324,6 +324,38 @@ export const register = async (
     feeStructureId = plan.id;
   }
 
+  /*
+    The same check for a fee plan, and for the same reason: an id naming a price that has since
+    been retired is refused now, while the applicant is in front of us, rather than stored and
+    discovered at approval when the figure they were shown no longer exists.
+
+    A plan whose STRUCTURE has been retired is refused too — the plan row stays live to keep
+    billing the members on it, but the list is no longer being sold.
+  */
+  let feePlanId: bigint | null = null;
+
+  if (input.fee_plan_id) {
+    const now = new Date();
+    const chosenPlan = await prisma.feePlan.findFirst({
+      where: {
+        id: BigInt(input.fee_plan_id),
+        deletedAt: null,
+        is_active: true,
+        structure: { is_active: true, deletedAt: null },
+        effective_from: { lte: now },
+        OR: [{ effective_to: null }, { effective_to: { gte: now } }],
+      },
+      select: { id: true },
+    });
+
+    if (!chosenPlan) throw conflict('masters.noFeeConfigured');
+
+    feePlanId = chosenPlan.id;
+    /* Exactly one of the two is recorded. A signup that somehow carried both would otherwise
+       leave approval with two prices and no rule for choosing between them. */
+    feeStructureId = null;
+  }
+
   const [companyType, country, state, city, categories] = await Promise.all([
     prisma.companyType.findFirst({
       where: { id: companyTypeId, deletedAt: null, is_active: true },
@@ -517,6 +549,7 @@ export const register = async (
         category_id: primaryCategoryId,
         tier_id: null,
         fee_structure_id: feeStructureId,
+        fee_plan_id: feePlanId,
         company_name: input.company_name,
         legal_name: null,
         business_type: null,

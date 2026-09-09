@@ -153,6 +153,7 @@ export const drainNotifications = async (
         subject: rendered.subject,
         body: rendered.body,
         toAddress: row.to_address,
+        replyTo: row.reply_to,
       };
 
       const sendResult = await adapter.send(message);

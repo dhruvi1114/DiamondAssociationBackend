@@ -20,6 +20,7 @@ import { APPROVAL_REQUIRED_FIELDS } from '@modules/member/member.types';
 import { readBranding } from '@modules/settings/branding.service';
 import { listSettings } from '@modules/settings/settings.service';
 import type {
+  ListOwnInvoicesQuery,
   AddressInput,
   AdminUpdateMemberInput,
   ChangeCategoryInput,
@@ -1087,5 +1088,51 @@ export const getReceiptPdf = async (
   return {
     stream: await storage.current.getStream(key),
     filename: `${receipt.receipt_number}.pdf`,
+  };
+};
+
+/**
+ * The member's own invoices, a page at a time.
+ *
+ * Money is stringified here rather than left as `Prisma.Decimal`: the API
+ * contract says an amount is a string with two decimals, and a Decimal reaches
+ * JSON as an object the client would have to know the shape of.
+ */
+export const listOwnInvoices = async (memberId: bigint, query: ListOwnInvoicesQuery) => {
+  const csv = (value?: string) => (value ? value.split(',').filter(Boolean) : undefined);
+
+  const [{ rows, total }, years] = await Promise.all([
+    repo.listOwnInvoices(prisma, memberId, {
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+      ...(query.search ? { search: query.search } : {}),
+      ...(csv(query.status) ? { status: csv(query.status) } : {}),
+      ...(csv(query.type) ? { type: csv(query.type) } : {}),
+      ...(query.year ? { year: query.year } : {}),
+    }),
+    repo.ownInvoiceYears(prisma, memberId),
+  ]);
+
+  return {
+    rows: rows.map((row) => ({
+      id: row.id.toString(),
+      invoice_number: row.invoice_number,
+      invoice_type: row.invoice_type,
+      /* Which event, which plan. `null` rather than an empty string when an
+         invoice somehow has no lines, so the client renders "not available"
+         instead of a blank where a name should be. */
+      subject: row.items[0]?.description ?? null,
+      status: row.status,
+      issue_date: row.issue_date,
+      due_date: row.due_date,
+      total_amount: row.total_amount.toFixed(2),
+      amount_paid: row.amount_paid.toFixed(2),
+      balance_due: row.balance_due.toFixed(2),
+      currency: row.currency,
+    })),
+    total,
+    /* Sent with the page so the year filter offers only years that exist. An
+       option that returns nothing is a dead end the screen invented. */
+    years,
   };
 };

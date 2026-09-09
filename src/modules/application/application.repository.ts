@@ -22,6 +22,24 @@ export const findApplicationDetail = (db: Db, id: bigint) =>
     include: {
       category: { select: { id: true, code: true, name: true } },
       tier: { select: { id: true, code: true, name: true } },
+      /*
+        The plan the applicant chose, so the reviewer approving them can see what they will be
+        billed — and, just as importantly, what they will be billed to RENEW. Approval used to
+        show neither: the price was resolved silently inside activation and first became visible
+        on the invoice it produced.
+      */
+      fee_plan: {
+        select: {
+          id: true,
+          name: true,
+          billing_cycle: true,
+          amount: true,
+          renewal_amount: true,
+          tax_rate: true,
+          currency: true,
+          is_active: true,
+        },
+      },
       member: {
         select: {
           id: true,

@@ -414,6 +414,25 @@ const TEMPLATES: TemplateSeed[] = [
     ].join('\n'),
   },
   {
+    code: 'contact.enquiry_received',
+    channel: NotificationChannel.EMAIL,
+    locale: 'en',
+    subject: 'Enquiry from {{name}} — {{subject}}',
+    body: [
+      '{{name}} sent this through the contact form on the website.',
+      '',
+      'Subject: {{subject}}',
+      'Email:   {{email}}',
+      'Phone:   {{phone}}',
+      '',
+      '{{message}}',
+      '',
+      // Reply-To carries their address, so this is a statement of fact rather
+      // than an instruction to copy anything out.
+      'Reply to this email and it goes straight back to them.',
+    ].join('\n'),
+  },
+  {
     code: 'refund.approved',
     channel: NotificationChannel.EMAIL,
     locale: 'en',

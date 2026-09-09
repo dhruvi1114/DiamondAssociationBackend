@@ -316,3 +316,159 @@ model CompanyType {
   @@index([is_active, display_order])
   @@map("CompanyTypes")
 }
+
+/// How often a membership is billed. Four fixed system values (spec D-1): an admin names the
+/// PLAN ("Best Value"), never the cycle. The month count each implies is derived in code rather
+/// than stored, so a plan cannot claim to be quarterly and bill for five months.
+enum BillingCycle {
+  /// 1 month.
+  MONTHLY
+
+  /// 3 months.
+  QUARTERLY
+
+  /// 6 months.
+  HALF_YEARLY
+
+  /// 12 months.
+  YEARLY
+}
+
+/// Who a renewal price change reaches. Recorded at the moment the change is made, because that
+/// is the only moment the intent is knowable — see `docs/specs/2026-09-07-membership-fee-plans.md`
+/// §7. It governs renewals only: a joining price change reaches new applicants either way,
+/// since an existing member never pays a joining fee again.
+enum PriceScope {
+  /// Members on an older price move to this one at their next renewal.
+  ALL_MEMBERS
+
+  /// Members on an older price stay on it. Only new applicants see this one.
+  NEW_MEMBERS_ONLY
+}
+
+/// One version of the association's price list, and the container the admin screen lists.
+///
+/// It holds a name and a status and nothing else: dates, tax and prices live on the plans,
+/// because a price change touches one cycle at a time. The row exists so the list shows one
+/// line per price list rather than four, which is the whole reason the previous screen was
+/// unreadable.
+///
+/// Separate from `FeeStructures` on purpose. That table and its screen stay live until this one
+/// replaces them, and a shared table would have made the swap a big-bang.
+model FeePlanStructure {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// What staff call this price list, e.g. "Membership 2026". Shown only in the admin.
+  name String @db.VarChar(120)
+
+  /// Whether the list is offered to new applicants. Retiring hides it from the website and
+  /// refuses new applications; it does NOT stop it billing the members already on it, whose
+  /// renewals still resolve from its plans (spec §7).
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// Staff account that published this list, and the one that last changed it.
+  ///
+  /// A price list is the sort of record somebody asks about a year later — "who
+  /// put this up, and who moved it" — and a timestamp with no name against it
+  /// cannot answer either question.
+  created_by_admin_id BigInt?
+  updated_by_admin_id BigInt?
+
+  /// The cycles this list covers, live and superseded alike.
+  plans FeePlan[]
+
+  created_by AdminUser? @relation("FeeStructureCreatedBy", fields: [created_by_admin_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+  updated_by AdminUser? @relation("FeeStructureUpdatedBy", fields: [updated_by_admin_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  @@index([is_active, createdAt(sort: Desc)])
+  @@map("FeePlanStructures")
+}
+
+/// One billing cycle's price, carrying BOTH what it costs to join and what it costs to renew.
+///
+/// The two prices sit on one row deliberately. As two unrelated rows — which is what
+/// `FeeStructures.fee_type` made them — nothing forced the pair to exist, and the live database
+/// ended up with three joining prices and a single renewal price that was switched off. A
+/// member approved under that arrangement reaches renewal with no price to charge.
+///
+/// A price that has been invoiced is never edited. It is closed and a new row takes its place,
+/// so last year's invoice stays explainable; `price_scope` on the new row records whether the
+/// members on the old one come with it.
+model FeePlan {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to FeePlanStructures.id. ON DELETE RESTRICT — a list holding priced history is not
+  /// something a delete should be able to take with it.
+  structure_id BigInt
+
+  /// Which of the four cycles this price is for.
+  billing_cycle BillingCycle
+
+  /// What a member sees on the website, e.g. "Best Value". Names the plan, not the cycle.
+  name String @db.VarChar(120)
+
+  /// Joining price before tax, INR, 2 decimal places. Never a float (ADR-007).
+  /// Charged once, when an application is approved. CHECK amount >= 0.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// Renewal price before tax, charged every term after the first. Required, which is the
+  /// constraint this whole redesign exists to impose. CHECK renewal_amount >= 0.
+  renewal_amount Decimal @db.Decimal(14, 2)
+
+  /// Tax percentage applied on top of both prices, e.g. 18.00 for GST. CHECK between 0 and 100.
+  tax_rate Decimal @default(0) @db.Decimal(5, 2)
+
+  /// ISO-4217 currency code. INR only for now (assumption A-3).
+  currency String @default("INR") @db.Char(3)
+
+  /// First date this price applies, inclusive.
+  effective_from DateTime @db.Date
+
+  /// Last date this price applies, inclusive. NULL means open-ended.
+  /// CHECK effective_to IS NULL OR effective_to > effective_from.
+  effective_to DateTime? @db.Date
+
+  /// Whether members on an OLDER price move to this one at renewal. Written when the row is
+  /// published and never inferred later.
+  price_scope PriceScope @default(ALL_MEMBERS)
+
+  /// Whether this row is the one currently offered for its cycle. A false row is history: it no
+  /// longer appears on the website, and it still prices the renewals of members sitting on it.
+  is_active Boolean @default(true)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC).
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active; all reads filter deletedAt IS NULL.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  /// The price list this belongs to.
+  structure FeePlanStructure @relation(fields: [structure_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Terms priced from this plan. What M6 will read to know a member's renewal price.
+  terms MembershipTerm[]
+
+  /// Applications that chose this plan on the membership page.
+  applications MembershipApplication[]
+
+  /// Invoice lines priced from this plan, so a charge can always be traced back to it.
+  invoice_items InvoiceItem[]
+
+  @@index([structure_id, billing_cycle])
+  @@index([is_active, billing_cycle, effective_from(sort: Desc)])
+  @@map("FeePlans")
+}

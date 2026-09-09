@@ -130,6 +130,15 @@ const SETTINGS: SettingSeed[] = [
     is_public: true,
   },
   {
+    key: 'organisation.phone',
+    value: '',
+    value_type: SettingValueType.STRING,
+    group: 'organisation',
+    description:
+      'Office telephone number shown on the public contact page. Blank until the client supplies it.',
+    is_public: true,
+  },
+  {
     key: 'organisation.address',
     value: '',
     value_type: SettingValueType.STRING,

@@ -99,6 +99,12 @@ export const AUDIT_ACTIONS = {
   FEE_CREATED: 'fee_structure.created',
   /** A price was closed, deactivated or annotated. Amounts are never edited in place. */
   FEE_UPDATED: 'fee_structure.updated',
+  /* M2 redesign — the price list that carries both a joining and a renewal price. */
+  FEE_PLAN_STRUCTURE_CREATED: 'fee_plan_structure.created',
+  FEE_PLAN_STRUCTURE_UPDATED: 'fee_plan_structure.updated',
+  FEE_PLAN_STRUCTURE_RETIRED: 'fee_plan_structure.retired',
+  /** A billed price closed and replaced. `after.price_scope` records who the new one reaches. */
+  FEE_PLAN_VERSIONED: 'fee_plan.versioned',
   /** A document type was created. */
   DOCUMENT_TYPE_CREATED: 'document_type.created',
   /** A document type was edited or (de)activated. */
@@ -267,6 +273,10 @@ export const AUDIT_ACTIONS = {
   REFUND_COMPLETED: 'refund.completed',
   /** The transfer did not go through. */
   REFUND_FAILED: 'refund.failed',
+
+  // --- M8: contact enquiries -----------------------------------------------
+  /** Staff marked a public enquiry dealt with, or put it back on the queue. */
+  CONTACT_ENQUIRY_HANDLED: 'contact_enquiry.handled',
 
   // --- M9: news -------------------------------------------------------------
   /** A news article was started as a draft. */

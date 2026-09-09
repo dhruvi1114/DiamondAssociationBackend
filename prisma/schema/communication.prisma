@@ -90,6 +90,13 @@ model Notification {
   /// redirect a message that has already been raised.
   to_address String? @db.VarChar(200)
 
+  /// Where a reply should go, when that is not the sending account.
+  ///
+  /// Exists for messages the platform sends *on somebody's behalf* -- a contact
+  /// enquiry is from the platform but about a visitor, and without this the
+  /// office pressing Reply writes to the no-reply account instead of them.
+  reply_to String? @db.VarChar(200)
+
   /// Outbox state: QUEUED, SENDING, SENT, FAILED, CANCELLED.
   status NotificationStatus @default(QUEUED)
 
@@ -125,4 +132,69 @@ model Notification {
   @@index([admin_user_id, channel, read_at])
   @@index([member_id])
   @@map("Notifications")
+}
+
+/// An enquiry sent from the public contact form.
+///
+/// Stored before the office is emailed, and that order is the point: a message
+/// that only ever existed as an email is lost the moment SMTP fails, and nobody
+/// ever learns it was sent. The row survives any mail failure, and the outbox
+/// retries the notification on its own.
+///
+/// Not tied to a member. Most people who use this form are not members yet --
+/// that is usually why they are writing.
+/// A message from the public contact form.
+///
+/// The row is written before the office is emailed. A message that only ever existed as an email
+/// is gone the moment SMTP fails, and nobody ever learns it was sent — which is the one failure a
+/// contact form cannot be allowed to have.
+model ContactEnquiry {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// Sender's name, as typed.
+  name String @db.VarChar(150)
+
+  /// Sender's email. Where a reply goes, so it is required even though the rest
+  /// of the form is forgiving.
+  email String @db.VarChar(200)
+
+  /// Optional phone. Some enquirers would rather be called than written to.
+  phone String? @db.VarChar(20)
+
+  /// What it is about, in the sender's words.
+  subject String @db.VarChar(200)
+
+  /// The enquiry itself.
+  message String @db.Text
+
+  /// 0 = NEW, 1 = HANDLED. Deliberately two states: this is a to-do list, not a
+  /// helpdesk, and a third state would need someone to define what it means.
+  status Int @default(0) @db.SmallInt
+
+  /// Staff account that dealt with it. NULL while still NEW.
+  handled_by_admin_id BigInt?
+
+  /// When it was marked dealt with.
+  handled_at DateTime? @db.Timestamptz(6)
+
+  /// Where it came from. Kept for abuse investigation only -- never displayed
+  /// beside the message, because an IP tells staff nothing about the enquiry.
+  ip String? @db.VarChar(64)
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// Last modification timestamp (UTC). Carries a DB default as well as Prisma's `@updatedAt`,
+  /// matching the migration that created the column.
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  /// Soft-delete timestamp (UTC). NULL means active.
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  handled_by AdminUser? @relation("ContactEnquiryHandledBy", fields: [handled_by_admin_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([handled_by_admin_id])
+  @@map("ContactEnquiries")
 }

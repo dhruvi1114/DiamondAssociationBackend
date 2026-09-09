@@ -14,6 +14,13 @@ export interface QueueNotificationInput {
   memberId?: bigint | number | null;
   /** Email address or phone number. NULL for IN_APP. */
   toAddress?: string | null;
+  /**
+   * Where a reply should go, when that is not the sending account.
+   *
+   * For messages the platform sends on somebody's behalf. Without it, replying
+   * to a contact enquiry writes to the no-reply address.
+   */
+  replyTo?: string | null;
   /** Template variables. Snapshotted — a later profile edit cannot rewrite it. */
   payload?: TemplateVariables;
 }
@@ -55,6 +62,7 @@ export const queueNotification = async (
       admin_user_id: toBigInt(input.adminUserId),
       member_id: toBigInt(input.memberId),
       to_address: input.toAddress ?? null,
+      reply_to: input.replyTo ?? null,
       payload_json: (input.payload ?? {}) as Prisma.InputJsonValue,
       status: NotificationStatus.QUEUED,
       next_attempt_at: new Date(),

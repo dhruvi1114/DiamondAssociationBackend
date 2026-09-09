@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
-import { API_V1, END_POINTS } from '@constant';
+import { bannerUrl } from '@modules/event/event.media';
 import { ACTOR_TYPES, AUDIT_ACTIONS } from '@constant/audit.constant';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { prisma } from '@db/prisma';
@@ -8,7 +8,7 @@ import { writeAudit } from '@helpers/audit';
 import { EVENT_STATUS } from '@modules/event/event.constants';
 import { getNumericSetting, SETTING_KEYS } from '@helpers/settings';
 import { audienceFor, resolveTier } from '@modules/event/event.pricing';
-import { DEFAULT_GRACE_DAYS } from '@modules/event/registration.constants';
+import { DEFAULT_GRACE_DAYS, SEAT_HOLDING_STATUSES } from '@modules/event/registration.constants';
 import * as repo from '@modules/event/event.repository';
 import { cancelEventWithRefunds } from '@modules/event/registration.service';
 import { touchedByAdmin } from '@modules/event/actorColumns';
@@ -413,16 +413,6 @@ const registrationState = (
   return { open: true, reason: null };
 };
 
-/**
- * Where an event's poster is fetched from.
- *
- * Keyed by slug, and the endpoint behind it re-checks the event's status and
- * visibility — the URL is a request, not a grant. Null when there is no poster,
- * so the card draws its own placeholder rather than a broken image.
- */
-const bannerUrl = (slug: string, path: string | null): string | null =>
-  path ? `${API_V1}${END_POINTS.PUBLIC}${END_POINTS.EVENTS}/${slug}/banner` : null;
-
 /** How much of the description a card carries before it stops being a card. */
 const EXCERPT_MAX = 180;
 
@@ -565,6 +555,72 @@ export const getPublicEvent = async (slug: string, now = new Date()) => {
 };
 
 /**
+ * This company's live booking on this event, if it has one.
+ *
+ * "Live" is statuses 0–3, the same set the `EventRegistrations_one_live_per_member`
+ * partial unique index is built on — so this returns a booking exactly when a
+ * second one would be refused. A company whose hold expired or who cancelled
+ * gets null and may book again, which is what that index is partial for.
+ *
+ * Without this the detail page has no idea the reader has already booked: it
+ * offers "Register Now", takes them through the whole form, and answers with a
+ * conflict at the point of submission.
+ */
+const liveBookingFor = async (memberId: bigint, eventId: bigint) => {
+  const booking = await prisma.eventRegistration.findFirst({
+    where: {
+      member_id: memberId,
+      event_id: eventId,
+      status: { in: SEAT_HOLDING_STATUSES },
+      deletedAt: null,
+    },
+    include: {
+      invoice: { select: { id: true, invoice_number: true, status: true } },
+      attendees: {
+        orderBy: { id: 'asc' },
+        select: {
+          attendee_code: true,
+          full_name: true,
+          designation: true,
+          /* Both optional on the model, so both nullable here — a colleague
+             added by name alone has neither, and the table says so rather than
+             leaving the cell blank. */
+          email: true,
+          phone: true,
+          unit_price: true,
+        },
+      },
+    },
+  });
+
+  if (!booking) return null;
+
+  return {
+    id: booking.id.toString(),
+    registration_code: booking.registration_code,
+    status: booking.status,
+    seats: booking.attendee_count,
+    total_amount: booking.total_amount.toFixed(2),
+    expires_at: booking.expires_at,
+    invoice: booking.invoice
+      ? {
+          id: booking.invoice.id.toString(),
+          invoice_number: booking.invoice.invoice_number,
+          status: booking.invoice.status,
+        }
+      : null,
+    attendees: booking.attendees.map((person) => ({
+      attendee_code: person.attendee_code,
+      full_name: person.full_name,
+      designation: person.designation,
+      email: person.email,
+      phone: person.phone,
+      unit_price: person.unit_price.toFixed(2),
+    })),
+  };
+};
+
+/**
  * One published event by slug for a signed-in member, either visibility.
  *
  * Carries `your_price` — what *this* viewer would actually be charged — beside
@@ -580,12 +636,26 @@ export const getMemberEvent = async (slug: string, userId?: bigint, now = new Da
 
   const detail = eventDetail(event, now);
 
-  if (!userId || !detail.current_price) return { ...detail, your_price: null, your_audience: null };
+  /* `your_booking` is on every branch, null included. A field that appears only
+     sometimes is a field the client has to guard for, and the one branch that
+     forgot it would be the one that silently offered a second booking. */
+  if (!userId) {
+    return { ...detail, your_price: null, your_audience: null, your_booking: null };
+  }
 
   const member = await prisma.member.findFirst({
     where: { team_users: { some: { user_id: userId, status: 1 } }, deletedAt: null },
-    select: { current_term: { select: { valid_till: true } } },
+    select: { id: true, current_term: { select: { valid_till: true } } },
   });
+
+  /* Looked up before the pricing branch below: a booking exists whether or not
+     a price tier covers today, and returning null here on a lapsed tier would
+     put "Register Now" back in front of somebody who has already paid. */
+  const yourBooking = member ? await liveBookingFor(member.id, event.id) : null;
+
+  if (!detail.current_price) {
+    return { ...detail, your_price: null, your_audience: null, your_booking: yourBooking };
+  }
 
   const graceDays = await getNumericSetting(SETTING_KEYS.MEMBERSHIP_GRACE_DAYS, DEFAULT_GRACE_DAYS);
 
@@ -597,6 +667,7 @@ export const getMemberEvent = async (slug: string, userId?: bigint, now = new Da
 
   return {
     ...detail,
+    your_booking: yourBooking,
     your_audience: audience,
     your_price:
       audience === 'MEMBER'

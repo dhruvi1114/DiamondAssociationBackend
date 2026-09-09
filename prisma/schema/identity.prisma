@@ -163,11 +163,16 @@ model AdminUser {
   approval_actions ApprovalAction[] @relation("ApprovalActor")
 
   /// Invoices this staff member raised by hand.
-  invoices_created  Invoice[] @relation("InvoiceCreator")
+  invoices_created       Invoice[]          @relation("InvoiceCreator")
   /// Refunds this account raised, released, or ended.
-  refunds_requested Refund[]  @relation("RefundRequestedBy")
-  refunds_approved  Refund[]  @relation("RefundApprovedBy")
-  refunds_finalised Refund[]  @relation("RefundFinalisedBy")
+  refunds_requested      Refund[]           @relation("RefundRequestedBy")
+  refunds_approved       Refund[]           @relation("RefundApprovedBy")
+  refunds_finalised      Refund[]           @relation("RefundFinalisedBy")
+  /// Contact enquiries this account dealt with.
+  contact_enquiries      ContactEnquiry[]   @relation("ContactEnquiryHandledBy")
+  /// Price lists this account published or last changed.
+  fee_structures_created FeePlanStructure[] @relation("FeeStructureCreatedBy")
+  fee_structures_updated FeePlanStructure[] @relation("FeeStructureUpdatedBy")
 
   @@index([status, createdAt(sort: Desc)])
   @@index([created_by_admin_id])

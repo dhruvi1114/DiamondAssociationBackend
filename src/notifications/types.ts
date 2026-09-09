@@ -10,6 +10,11 @@ export interface RenderedNotification {
   body: string;
   /** NULL for IN_APP, which has no external destination. */
   toAddress: string | null;
+  /**
+   * Where a reply goes, when that is not the sending account. NULL for almost
+   * everything — only messages sent on somebody else's behalf set it.
+   */
+  replyTo?: string | null;
 }
 
 export interface ChannelSendResult {

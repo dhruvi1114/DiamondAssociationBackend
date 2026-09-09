@@ -61,6 +61,13 @@ export class EmailChannel implements NotificationChannelAdapter {
     const info = await this.getTransporter().sendMail({
       from: environment.mail.from,
       to: message.toAddress,
+      /*
+        Only set where the message is sent on somebody else's behalf. `from` is
+        always the platform's own account — putting a visitor's address there
+        would be forgery and every mail provider rejects it — so `replyTo` is
+        how Reply reaches the person who actually wrote.
+      */
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
       subject: message.subject ?? '',
       text: message.body,
     });

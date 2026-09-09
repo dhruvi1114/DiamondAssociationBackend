@@ -2,6 +2,14 @@ import { Router } from 'express';
 import { END_POINTS } from '@constant';
 import { authenticateAdmin, authorize, validateRequest } from '@middleware';
 import * as controller from '@modules/masters/masters.controller';
+import * as feePlans from '@modules/masters/masters.feePlans.controller';
+import {
+  createStructureSchema,
+  setStructureActiveSchema,
+  structureIdParamSchema,
+  structureListQuerySchema,
+  updateStructureSchema,
+} from '@modules/masters/masters.feePlans.types';
 import {
   categoryListQuerySchema,
   cityListQuerySchema,
@@ -357,6 +365,50 @@ mastersAdminRouter.delete(
   controller.deleteCity,
 );
 
+/* --- fee plans (M2 redesign) ---------------------------------------------- */
+
+/*
+ * Same permissions as the price list it replaces: an admin who may set fees may set these. The
+ * routes are separate from /fee-structures because the two shapes coexist until the old screen
+ * retires — see docs/specs/2026-09-07-membership-fee-plans.md.
+ */
+
+mastersAdminRouter.get(
+  END_POINTS.FEE_PLANS,
+  authorize('fee.view'),
+  validateRequest({ query: structureListQuerySchema }),
+  feePlans.listStructures,
+);
+
+mastersAdminRouter.post(
+  END_POINTS.FEE_PLANS,
+  authorize('fee.manage'),
+  validateRequest({ body: createStructureSchema }),
+  feePlans.createStructure,
+);
+
+mastersAdminRouter.get(
+  `${END_POINTS.FEE_PLANS}/:id`,
+  authorize('fee.view'),
+  validateRequest({ params: structureIdParamSchema }),
+  feePlans.getStructure,
+);
+
+/*
+ * One PATCH takes both a whole-grid save and a bare `{ is_active }` retire, so the screen never
+ * has to know that retiring is a different kind of write. The body schema is a union for the
+ * same reason.
+ */
+mastersAdminRouter.patch(
+  `${END_POINTS.FEE_PLANS}/:id`,
+  authorize('fee.manage'),
+  validateRequest({
+    params: structureIdParamSchema,
+    body: updateStructureSchema.or(setStructureActiveSchema),
+  }),
+  feePlans.updateStructure,
+);
+
 /**
  * `/api/v1/public/...` — anonymous registration and membership catalogue reads.
  */
@@ -364,6 +416,8 @@ export const mastersPublicRouter = Router();
 
 mastersPublicRouter.get(END_POINTS.MEMBERSHIP, controller.publicCatalogue);
 mastersPublicRouter.get(END_POINTS.MEMBERSHIP_PLANS, controller.publicPlans);
+/* The redesigned cards: live plans of the live list, each with its joining and renewal price. */
+mastersPublicRouter.get(END_POINTS.FEE_PLANS, feePlans.listPublicPlans);
 mastersPublicRouter.get(END_POINTS.REGISTRATION_OPTIONS, controller.registrationOptions);
 mastersPublicRouter.get(END_POINTS.DOCUMENT_CHECKLIST, controller.publicDocumentChecklist);
 mastersPublicRouter.get(

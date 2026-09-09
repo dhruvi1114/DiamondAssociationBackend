@@ -169,6 +169,13 @@ model MembershipApplication {
   /// null here degrades to that same fallback.
   fee_structure_id BigInt?
 
+  /// FK to FeePlans.id — the plan picked on the redesigned membership page.
+  ///
+  /// Sits BESIDE `fee_structure_id` rather than replacing it: the old price list and its screen
+  /// stay live until the new one takes over, and an application in flight must keep pricing from
+  /// whichever of the two it was created against. Exactly one is set on any new row.
+  fee_plan_id BigInt?
+
   /// Where the application sits.
   status ApplicationStatus @default(DRAFT)
 
@@ -246,6 +253,9 @@ model MembershipApplication {
   /// The plan picked on the membership page, when one was.
   fee_structure FeeStructure? @relation(fields: [fee_structure_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
+  /// The fee plan picked on the membership page, when one was.
+  fee_plan FeePlan? @relation(fields: [fee_plan_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
   /// The band applied for.
   tier MembershipTier? @relation(fields: [tier_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
@@ -265,6 +275,12 @@ model MembershipApplication {
   @@index([current_stage_id, status])
   @@index([user_id, createdAt(sort: Desc)])
   @@index([member_id])
+  /**
+   * Declared because the database carries them: the columns are swept whenever a price is
+   * retired, and an undeclared index is one `prisma migrate diff` reports as drift forever.
+   */
+  @@index([fee_structure_id])
+  @@index([fee_plan_id])
   @@map("MembershipApplications")
 }
 
@@ -626,6 +642,15 @@ model MembershipTerm {
   /// a cancelled invoice must not delete the term it was raised for.
   invoice_id BigInt?
 
+  /// FK to FeePlans.id — the plan this term was priced from.
+  ///
+  /// Nullable because terms created before fee plans existed carry no choice, and because staff
+  /// entering one on an applicant's behalf may still have none. Written at approval from the
+  /// moment the column exists, even though nothing reads it until M6: a term created without it
+  /// has no record of which plan was bought, and every such member becomes unpriceable when the
+  /// renewal engine arrives. One column now, or a data-repair job later.
+  fee_plan_id BigInt?
+
   /// Row creation timestamp (UTC).
   createdAt DateTime @default(now()) @db.Timestamptz(6)
 
@@ -644,11 +669,16 @@ model MembershipTerm {
   /// The invoice raised for it.
   invoice Invoice? @relation("TermInvoice", fields: [invoice_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
+  /// The plan this term was priced from. RESTRICT, not SetNull: losing the link would leave the
+  /// term with no renewal price at all, which is the exact failure this column prevents.
+  fee_plan FeePlan? @relation(fields: [fee_plan_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
   /// The member records pointing at this term as their current one.
   current_for Member[] @relation("MemberCurrentTerm")
 
   @@index([member_id, valid_till(sort: Desc)])
   @@index([status, valid_till])
+  @@index([fee_plan_id])
   @@map("MembershipTerms")
 }
 
@@ -839,6 +869,11 @@ model InvoiceItem {
   /// invoice can always be traced to the fee that produced it. ON DELETE SET NULL.
   fee_structure_id BigInt?
 
+  /// FK to FeePlans.id — the plan this line was priced from, for lines raised under the
+  /// redesigned price list. ON DELETE SET NULL, for the same reason as above: retiring a price
+  /// must never orphan the invoices that quoted it.
+  fee_plan_id BigInt?
+
   /// Display order on the invoice.
   sort_order Int @default(0)
 
@@ -854,6 +889,10 @@ model InvoiceItem {
   /// The fee this line was priced from.
   fee_structure FeeStructure? @relation(fields: [fee_structure_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
+  /// The fee plan this line was priced from, under the redesigned price list.
+  fee_plan FeePlan? @relation(fields: [fee_plan_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
   @@index([invoice_id, sort_order])
+  @@index([fee_plan_id])
   @@map("InvoiceItems")
 }

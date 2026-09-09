@@ -23,6 +23,7 @@ import { planTerm } from '@helpers/membershipTerm';
 import { queueNotifications } from '@notifications/outbox';
 import { revokeApplicationAccessTokens } from '@modules/application/application.tokens';
 import * as authService from '@modules/auth/auth.service';
+import * as feePlans from '@modules/masters/masters.feePlans.service';
 import * as masters from '@modules/masters/masters.service';
 import * as memberRepo from '@modules/member/member.repository';
 import { AppError } from '@utils/appError';
@@ -212,13 +213,59 @@ export const activateApprovedApplication = async (
     entering one on an applicant's behalf still have none to record. Those price
     exactly as they did before this column existed.
   */
-  const fee = application.fee_structure_id
-    ? await masters.feeById(application.fee_structure_id)
-    : await masters.resolveFee({
-        categoryId: application.category_id,
-        tierId: application.tier_id,
-        feeType: 'NEW_MEMBERSHIP',
-      });
+  /*
+    Three sources, in order of how specific the applicant's choice was: a fee plan they picked on
+    the redesigned membership page, a fee structure they picked on the old one, or — for an
+    application that predates both, or one staff entered on someone's behalf — the resolver.
+
+    Normalised into one shape so the money below has a single code path. The two ids are mutually
+    exclusive and both are carried, because the term and the invoice line each record which kind
+    of price produced them.
+  */
+  const plan = application.fee_plan_id ? await feePlans.feePlanById(application.fee_plan_id) : null;
+
+  const legacy = plan
+    ? null
+    : application.fee_structure_id
+      ? await masters.feeById(application.fee_structure_id)
+      : await masters.resolveFee({
+          categoryId: application.category_id,
+          tierId: application.tier_id,
+          feeType: 'NEW_MEMBERSHIP',
+        });
+
+  /*
+    A plan chosen weeks ago may have been retired since. Charging a retired price would bill the
+    member for something the association has stopped selling, so it fails loudly here — before
+    anything is written — exactly as a missing price does.
+  */
+  if (plan && !plan.is_active) {
+    throw new AppError({ errorType: ERROR_TYPES.CONFLICT, messageKey: 'masters.feePlanOverlap' });
+  }
+
+  const fee = plan
+    ? {
+        fee_plan_id: plan.fee_plan_id,
+        fee_structure_id: null as string | null,
+        category_name: null as string | null,
+        tier_name: null as string | null,
+        plan_name: plan.plan_name as string | null,
+        amount: plan.amount,
+        tax_rate: plan.tax_rate,
+        currency: plan.currency,
+        duration_months: plan.duration_months,
+      }
+    : {
+        fee_plan_id: null as string | null,
+        fee_structure_id: legacy!.fee_structure_id,
+        category_name: legacy!.category_name,
+        tier_name: legacy!.tier_name,
+        plan_name: null as string | null,
+        amount: legacy!.amount,
+        tax_rate: legacy!.tax_rate,
+        currency: legacy!.currency,
+        duration_months: legacy!.duration_months,
+      };
 
   /* --- 2. the member becomes real ---------------------------------------- */
 
@@ -268,6 +315,14 @@ export const activateApprovedApplication = async (
       valid_from: termWindow.validFrom,
       valid_till: termWindow.validTill,
       status: TermStatus.PENDING_PAYMENT,
+      /*
+        The single most important write on this screen for anything that comes later. Nothing
+        reads it until M6, but a term without it carries no record of which plan was bought, and
+        that member cannot be priced when the renewal engine arrives — there is no way to
+        reconstruct the answer afterwards. Null only for the legacy paths, which have no plan to
+        record.
+      */
+      fee_plan_id: fee.fee_plan_id ? BigInt(fee.fee_plan_id) : null,
     },
   });
 
@@ -327,7 +382,11 @@ export const activateApprovedApplication = async (
   // FeeStructures row (`category_id IS NULL` — priced the same for every
   // category). "Membership" alone is the truthful label there; inventing a
   // category name the fee was not actually priced for would be wrong.
-  const termLabel = `${fee.category_name ?? 'Membership'}${fee.tier_name ? ` — ${fee.tier_name}` : ''}`;
+  /* A plan has a name the member chose off the website — "Best Value" — and that is what belongs
+     on their invoice. The category/tier label is the legacy path's answer to the same question. */
+  const termLabel =
+    fee.plan_name ??
+    `${fee.category_name ?? 'Membership'}${fee.tier_name ? ` — ${fee.tier_name}` : ''}`;
   const period = termWindow.prorated
     ? `${termWindow.months} months, pro-rata to ${asDate(termWindow.validTill)}`
     : `${termWindow.months} months`;
@@ -364,6 +423,7 @@ export const activateApprovedApplication = async (
                   // No fee structure behind it — this price comes from
                   // SystemSettings, and the column is nullable for exactly this.
                   fee_structure_id: null,
+                  fee_plan_id: null,
                   sort_order: 0,
                 },
               ]
@@ -377,7 +437,8 @@ export const activateApprovedApplication = async (
             line_total: membershipNet.add(membershipTax),
             // The fee this line came from, so any invoice can be traced back to
             // the price that produced it.
-            fee_structure_id: BigInt(fee.fee_structure_id),
+            fee_structure_id: fee.fee_structure_id ? BigInt(fee.fee_structure_id) : null,
+            fee_plan_id: fee.fee_plan_id ? BigInt(fee.fee_plan_id) : null,
             sort_order: chargesApplicationFee ? 1 : 0,
           },
         ],

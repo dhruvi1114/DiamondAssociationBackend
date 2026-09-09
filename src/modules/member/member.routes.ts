@@ -7,6 +7,7 @@ import { authenticate, authenticateAdmin, authorize, validateRequest } from '@mi
 import * as controller from '@modules/member/member.controller';
 import * as teamController from '@modules/member/team.controller';
 import {
+  listOwnInvoicesSchema,
   addressSchema,
   adminUpdateMemberSchema,
   changeCategorySchema,
@@ -77,6 +78,12 @@ memberRouter.patch(
   '/me/team/:id/status',
   validateRequest({ params: idParamSchema, body: teamStatusSchema }),
   teamController.setTeamMemberStatus,
+);
+
+memberRouter.get(
+  '/me/invoices',
+  validateRequest({ query: listOwnInvoicesSchema }),
+  controller.listOwnInvoices,
 );
 
 memberRouter.get('/me/contacts', controller.listContacts);

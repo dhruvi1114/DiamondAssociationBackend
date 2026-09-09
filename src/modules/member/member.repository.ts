@@ -76,6 +76,36 @@ export const findMemberDetail = (db: Db, id: bigint) =>
         orderBy: [{ is_primary: 'desc' }, { address_type: 'asc' }],
       },
       invoices: { where: { deletedAt: null }, orderBy: { issue_date: 'desc' } },
+      /*
+        The current term and the plan that priced it, so anyone answering the phone can say what
+        this member pays and when it next falls due — without opening the invoice list and working
+        it out. `take: 1` on the newest expiry, which is what "current" means here.
+
+        The plan carries `renewal_amount`, so the answer to "what will I pay next year" comes from
+        the same row that priced this year rather than from a second lookup that could disagree.
+      */
+      terms: {
+        orderBy: { valid_till: 'desc' },
+        take: 1,
+        select: {
+          id: true,
+          term_type: true,
+          valid_from: true,
+          valid_till: true,
+          status: true,
+          fee_plan: {
+            select: {
+              id: true,
+              name: true,
+              billing_cycle: true,
+              amount: true,
+              renewal_amount: true,
+              tax_rate: true,
+              currency: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -484,3 +514,89 @@ export const listMemberCategories = (db: Db, memberId: bigint) =>
     },
     orderBy: { category: { display_order: 'asc' } },
   });
+
+/**
+ * One member's invoices, paginated and filtered on the server.
+ *
+ * Split out from the profile load: that returned every invoice a member had
+ * ever had on every page view, and a screen holding all of them can only filter
+ * what it was already given — a search that cannot see page four is not a
+ * search.
+ */
+export const listOwnInvoices = async (
+  db: Db,
+  memberId: bigint,
+  params: {
+    skip: number;
+    take: number;
+    search?: string;
+    status?: string[];
+    type?: string[];
+    year?: string;
+  },
+) => {
+  const where: Prisma.InvoiceWhereInput = {
+    member_id: memberId,
+    deletedAt: null,
+    ...(params.search ? { invoice_number: { contains: params.search, mode: 'insensitive' } } : {}),
+    ...(params.status?.length ? { status: { in: params.status as never } } : {}),
+    ...(params.type?.length ? { invoice_type: { in: params.type as never } } : {}),
+    ...(params.year
+      ? {
+          issue_date: {
+            gte: new Date(`${params.year}-01-01T00:00:00.000Z`),
+            lte: new Date(`${params.year}-12-31T23:59:59.999Z`),
+          },
+        }
+      : {}),
+  };
+
+  const [rows, total] = await Promise.all([
+    db.invoice.findMany({
+      where,
+      orderBy: { issue_date: 'desc' },
+      skip: params.skip,
+      take: params.take,
+      /*
+        The line that says WHICH.
+
+        "Event" and "Membership" name the kind of thing billed; the line names
+        the thing — "Refund smoke — Flat (1 delegate)", "Best Value
+        (12 months)". It is written when the invoice is raised and never
+        recomputed, so it still names the event after the event is renamed, and
+        still names the plan after the price list has moved on.
+
+        LAST by sort_order, not first. A membership invoice can carry a one-time
+        application fee, and that fee is deliberately placed ABOVE the
+        membership line (activation.service.ts) — so the first row is
+        "Application fee (one-time)", which is the one thing here that does not
+        identify the membership. Both writers put the subject line last:
+        an event invoice has only the one.
+      */
+      include: {
+        items: {
+          orderBy: { sort_order: 'desc' },
+          take: 1,
+          select: { description: true },
+        },
+      },
+    }),
+    db.invoice.count({ where }),
+  ]);
+
+  return { rows, total };
+};
+
+/** The years this member has invoices in, newest first — the year filter's options. */
+export const ownInvoiceYears = async (db: Db, memberId: bigint): Promise<string[]> => {
+  const rows = await db.$queryRaw<{ year: string }[]>`
+    SELECT DISTINCT to_char("issue_date", 'YYYY') AS year
+      FROM "Invoices"
+     WHERE "member_id" = ${memberId}
+       AND "deletedAt" IS NULL
+       AND "issue_date" IS NOT NULL
+     ORDER BY year DESC
+  `;
+
+  return rows.map((row) => row.year);
+};

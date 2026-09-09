@@ -84,3 +84,13 @@ SELECT mu."member_id",
         AND c."user_id" = u."id"
         AND c."deletedAt" IS NULL
    );
+
+-- ============================================================================
+-- Table & column comments (ADR-013 / database-design.md §I)
+-- Generated from the /// doc-comments in prisma/schema/*.prisma by
+--   npx tsx scripts/emit-db-comments.ts
+-- Added after the fact: this migration shipped without them, which left the
+-- db:check-comments gate red and therefore unable to catch the NEXT omission.
+-- ============================================================================
+
+COMMENT ON COLUMN "MemberContacts"."user_id" IS 'FK to Users.id when this person also has a login, NULL when they do not. ON DELETE NO ACTION — a login is never deleted out from under a contact. This is what makes one list of people work. The contact row is the person: name, job title, email, phone. The login is a separate thing they may or may not have, and an accountant who receives invoices but must not reach the portal is a contact with no user_id. The access state itself is not duplicated here — it lives on MemberUsers, and is read through this link.';

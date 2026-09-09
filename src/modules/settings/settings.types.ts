@@ -18,6 +18,21 @@ const nonEmpty = z.string().trim().min(1, 'validation.required').max(200);
 const boolean = z.enum(['true', 'false']);
 
 /**
+ * A telephone number as somebody would write it on a letterhead — digits, and
+ * the spaces, brackets, hyphens and leading + they are grouped with.
+ *
+ * Deliberately loose. This is displayed, never dialled by the platform and
+ * never used as an identifier, and a strict pattern here would reject a
+ * perfectly good number with an extension on the end. Empty is allowed: it is
+ * how the office says it has not published one.
+ */
+const phone = z
+  .string()
+  .trim()
+  .max(20, 'validation.tooLong')
+  .refine((v) => v === '' || /^[+()\d][\d\s()+-]*$/.test(v), 'validation.invalidPhone');
+
+/**
  * Free text that may run to several lines and may legitimately be empty — an
  * address, an invoice footer. Trimmed at the ends only: the line breaks inside
  * are the whole point, and collapsing them would reformat the address someone
@@ -74,6 +89,13 @@ export const EDITABLE_SETTINGS: Record<string, z.ZodType<string>> = {
   // 'directory.public_enabled': boolean,
   'directory.enabled': boolean,
   'organisation.address': multiline(500),
+  'organisation.phone': phone,
+  /*
+    The consent wording an applicant agrees to. It was defined on the settings
+    screen and left out of this list, so the field rendered read-only and the
+    only way to change legal copy was a migration.
+  */
+  'registration.consent_text': multiline(1000),
   /*
     Uploaded, not typed. The value is a storage key, and a key an admin could
     write by hand is a key an admin could point at somebody else's file — the

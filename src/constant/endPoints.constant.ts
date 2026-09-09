@@ -36,6 +36,9 @@ export const END_POINTS = {
   CATEGORIES: '/membership-categories',
   TIERS: '/membership-tiers',
   FEES: '/fee-structures',
+  /* M2 redesign — the price list carrying a joining AND a renewal price per cycle.
+     A separate path from FEES: the two shapes coexist until the old screen retires. */
+  FEE_PLANS: '/fee-plans',
   DOCUMENT_TYPES: '/document-types',
   DOCUMENT_CHECKLIST: '/document-checklist',
   MEMBERSHIP: '/membership',

@@ -61,6 +61,9 @@ export const PERMISSION_CATALOGUE: { code: string; description: string }[] = [
       'Write, edit, publish, unpublish and archive news articles, and curate news categories.',
   },
 
+  { code: 'enquiry.view', description: 'Read enquiries sent from the public contact form.' },
+  { code: 'enquiry.manage', description: 'Mark a contact enquiry as handled.' },
+
   { code: 'notice.view', description: 'View notices and circulars.' },
   { code: 'notice.manage', description: 'Create and edit notices and circulars.' },
   { code: 'notice.publish', description: 'Publish a notice to its audience.' },

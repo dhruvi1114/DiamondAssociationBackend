@@ -130,6 +130,19 @@ export const listContacts = handler(async (req, res) => {
   });
 });
 
+/** `GET /members/me/invoices` — the member's own invoices, a page at a time. */
+export const listOwnInvoices = handler(async (req, res) => {
+  const member = await ownMember(req);
+  const query = req.query as unknown as Parameters<typeof service.listOwnInvoices>[1];
+  const result = await service.listOwnInvoices(member.id, query);
+
+  handleApiResponse(res, {
+    responseType: RES_STATUS.GET,
+    data: serialise({ rows: result.rows, years: result.years }),
+    pagination: { page: query.page, limit: query.limit, total: result.total },
+  });
+});
+
 export const addContact = handler(async (req, res) => {
   const member = await ownMember(req);
   const created = await service.addContact(member.id, req.body as never, actor(req));
