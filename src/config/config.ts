@@ -22,6 +22,20 @@ const envSchema = z.object({
   APP_ENV: z.enum(['local', 'dev', 'staging', 'production']).default('local'),
   PORT: z.string().default('4000'),
   PUBLIC_BASE_URL: z.string().min(1, 'PUBLIC_BASE_URL is required'),
+  /**
+   * Where THIS API answers from, as the outside world reaches it.
+   *
+   * Distinct from `PUBLIC_BASE_URL`, which is the member web app — the two are
+   * different hosts, and the one existing variable is already used to build
+   * `/reset-password` and `/resubmit/:token` links into that app.
+   *
+   * Needed because an email carries an `<img>` the recipient's mail client
+   * fetches for itself: Gmail proxies it through Google's servers, so a URL only
+   * this machine can resolve renders a broken image in the inbox. Optional, and
+   * an email simply carries no logo when it is unset, which is the honest
+   * outcome in an environment that has no reachable API.
+   */
+  API_PUBLIC_URL: z.string().optional(),
 
   // ---- database ---------------------------------------------------------
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
@@ -111,6 +125,7 @@ export const environment = {
   isProduction: env.APP_ENV === 'production',
   port: Number(env.PORT),
   publicBaseUrl: env.PUBLIC_BASE_URL,
+  apiPublicUrl: env.API_PUBLIC_URL,
 
   databaseUrl: env.DATABASE_URL,
 

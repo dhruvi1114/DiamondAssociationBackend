@@ -76,12 +76,25 @@ describe('renderEmailHtml', () => {
     expect(html).toContain('Line one<br />line two.');
   });
 
-  it('always shows the logo, with the association name as its alt text', () => {
+  it('shows the logo, with the association name as its alt text', () => {
     const html = renderEmailHtml({ body: 'Hello,', ctaLabel: 'Open', branding });
 
     expect(html).toContain('<img src="https://api.example.org/api/v1/public/branding/logo"');
     // Images-off clients — Outlook's default — read this instead.
     expect(html).toContain('alt="ILGDA"');
+  });
+
+  it('sets the name in type when the API has no reachable address', () => {
+    // Local development: Gmail proxies images and cannot fetch from localhost,
+    // so a broken image icon is what a URL would actually produce.
+    const html = renderEmailHtml({
+      body: 'Hello,',
+      ctaLabel: 'Open',
+      branding: { ...branding, logoUrl: null },
+    });
+
+    expect(html).not.toContain('<img');
+    expect(html).toContain('ILGDA');
   });
 
   it('sends the body unchanged as the text half', () => {

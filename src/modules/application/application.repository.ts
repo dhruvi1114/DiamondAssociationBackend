@@ -181,6 +181,14 @@ export interface ApplicationQueueRow {
   /** Primary address of the applying company. Free text; always populated. */
   city: string | null;
   state: string | null;
+  /**
+   * The COMPANY's lifecycle state, not the application's — `status` above is the
+   * application's. `PENDING` means "approved, awaiting first payment"
+   * (`member.prisma:13`), which an APPROVED application cannot show on its own:
+   * the admin queue needs this to tell an approved-and-paid member apart from
+   * one still owing money.
+   */
+  member_status: string | null;
   total: bigint;
 }
 

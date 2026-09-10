@@ -112,12 +112,16 @@ export interface EmailBranding {
   /** `organisation.support_email`, for the footer. Empty hides the line. */
   supportEmail: string;
   /**
-   * Absolute, unauthenticated logo URL. Always set: `/public/branding/logo`
-   * serves the bundled ILGDA lockup when the association has uploaded nothing,
-   * because an email client cannot fall back to a text mark the way a browser
-   * can — it renders a broken image and nothing else.
+   * Absolute, unauthenticated logo URL, or null where the API has no address the
+   * outside world can reach (`API_PUBLIC_URL` unset — local development).
+   *
+   * The route itself always answers: it serves the bundled ILGDA lockup when the
+   * association has uploaded nothing. What is conditional is whether a mail
+   * client can REACH it. Gmail fetches the image through Google's own proxy, so
+   * a `localhost` URL renders a broken image in the inbox — worse than the text
+   * mark this falls back to.
    */
-  logoUrl: string;
+  logoUrl: string | null;
 }
 
 /**
@@ -145,10 +149,15 @@ export const loadBranding = async (): Promise<EmailBranding> => {
     /*
       The public branding route, not a storage key: an inbox has no token, and
       `/api/v1/public/branding/:slot` is unauthenticated for exactly this reason
-      (`settings.routes.ts`). Unconditional, because that route answers with the
-      bundled lockup when nothing is uploaded (`branding.service.ts`).
+      (`settings.routes.ts`). That route answers with the bundled lockup when
+      nothing is uploaded, so the only question here is reachability.
+
+      NOT `publicBaseUrl` — that is the member web app, which serves no API
+      route. Pointing an `<img>` at it produces a 404 in every inbox.
     */
-    logoUrl: `${environment.publicBaseUrl.replace(/\/+$/, '')}/api/v1/public/branding/logo`,
+    logoUrl: environment.apiPublicUrl?.trim()
+      ? `${environment.apiPublicUrl.trim().replace(/\/+$/, '')}/api/v1/public/branding/logo`
+      : null,
   };
 
   return cached;
@@ -232,8 +241,12 @@ export const renderEmailHtml = ({ body, ctaLabel, branding }: EmailLayoutInput):
   /*
     `alt` carries the association's name, so a client with images off — Outlook's
     default — still shows who wrote, in text, where the logo would have been.
+    With no reachable URL the name is set in type instead: a broken image icon
+    says less than the word it replaced.
   */
-  const masthead = `<img src="${branding.logoUrl}" alt="${escapeHtml(branding.organisationName)}" height="36" style="display:block;border:0;height:36px;max-height:36px;width:auto;" />`;
+  const masthead = branding.logoUrl
+    ? `<img src="${branding.logoUrl}" alt="${escapeHtml(branding.organisationName)}" height="36" style="display:block;border:0;height:36px;max-height:36px;width:auto;" />`
+    : `<span style="font-family:${TOKENS.font};font-size:18px;font-weight:700;color:${TOKENS.fg};">${escapeHtml(branding.organisationName)}</span>`;
 
   const footerLines = [
     `${escapeHtml(branding.organisationName)}`,
