@@ -1,14 +1,19 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
-import { RES_STATUS } from '@constant/message.constant';
+import { MSG_KEYS, RES_STATUS } from '@constant/message.constant';
 import * as service from '@modules/event/event.service';
 import * as media from '@modules/event/event.media.service';
 import * as eventPayment from '@modules/event/payment.service';
 import * as registration from '@modules/event/registration.service';
+import * as lookupService from '@modules/event/booking.lookup.service';
+import { verifyBookingLookupToken } from '@modules/event/booking.lookup.tokens';
+import * as memberService from '@modules/member/member.service';
 import { AppError } from '@utils/appError';
+import { bearerToken } from '@utils/jwt';
 import { handleApiResponse } from '@utils/handleResponse';
 import { prisma } from '@db/prisma';
 import * as memberRepo from '@modules/member/member.repository';
+import { EVENT_STATUS } from '@modules/event/event.constants';
 import { resolveEventAccessToken } from '@modules/event/registration.tokens';
 import { toWorkbook, XLSX_MIME } from '@helpers/excel';
 
@@ -108,11 +113,19 @@ const browseFilters = (req: Request) => {
   };
 };
 
-/** `GET /public/events/filters` · `GET /events/filters` — what the rail offers. */
+/**
+ * `GET /public/events/filters` · `GET /events/filters` — what the rail offers.
+ *
+ * Mounted on both routers, so `req.actor` may or may not exist. Presence of a
+ * token is not the test, though: an approved member who has not paid their
+ * invoice gets `req.actor` from the member router's `authenticate` middleware
+ * same as anyone else, but must see the same (public-only) facet counts as a
+ * guest. `resolveMemberBenefits` — the one place this rule lives — decides.
+ */
 export const eventFacets = handler(async (req, res) => {
-  // No session on the public router, so `req.actor` is the whole difference:
-  // a member's facets count the members-only events they can also see.
-  const facets = await service.browseFacets(req.actor?.id === undefined);
+  const publicOnly =
+    req.actor?.id === undefined ? true : !(await service.resolveMemberBenefits(req.actor.id));
+  const facets = await service.browseFacets(publicOnly);
 
   handleApiResponse(res, { responseType: RES_STATUS.GET, data: serialise(facets) });
 });
@@ -126,17 +139,29 @@ export const eventFacets = handler(async (req, res) => {
  */
 export const serveBanner = handler(async (req, res) => {
   const slug = req.params.slug as string;
-  const event =
-    req.actor?.id === undefined
-      ? await service.getPublicEvent(slug)
-      : await service.getMemberEvent(slug, req.actor.id);
 
-  if (!event?.banner_url) {
-    throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'event.bannerNotFound' });
-  }
+  /*
+    The poster is served for any PUBLISHED event, members-only included, and
+    deliberately does NOT go through `getPublicEvent`.
 
+    `bannerUrl` (event.media.ts) always emits the PUBLIC banner path, even in a
+    response built for a member — so routing this through the public-visibility
+    filter made a members-only event's poster 404 for EVERYONE, including the
+    members it was listed to. The card showed an empty grey box beside a title
+    and a price it had just rendered.
+
+    Serving it is the narrow exception, taken deliberately (user decision,
+    2026-09-10). Everything else about a members-only event stays absent from
+    every public query: it is not listed, not searched, not counted in the
+    filter rail, and `getPublicEvent` still refuses it. What is exposed here is
+    one marketing image, at a URL containing a slug with a random suffix, whose
+    bytes carry no event data — no date, no venue, no price, not even the title.
+
+    DRAFT and CANCELLED events are still refused: a poster for something never
+    published, or since called off, is not a picture anybody should be handed.
+  */
   const row = await prisma.event.findFirst({
-    where: { slug, deletedAt: null },
+    where: { slug, deletedAt: null, status: EVENT_STATUS.PUBLISHED },
     select: { banner_path: true },
   });
 
@@ -335,10 +360,18 @@ export const getPublicEvent = handler(async (req, res) => {
   handleApiResponse(res, { responseType: RES_STATUS.GET, data: serialise(event) });
 });
 
-/** `GET /events` — published events of both kinds, for a signed-in member. */
+/**
+ * `GET /events` — published events, for a signed-in member.
+ *
+ * Member-only events are included only when this caller currently has member
+ * benefits (see `resolveMemberBenefits`) — an approved member who has not
+ * paid their invoice sees the public set, exactly like a guest.
+ */
 export const listMemberEvents = handler(async (req, res) => {
   const query = browseFilters(req);
-  const { rows, total } = await service.listMemberEvents(query);
+  const publicOnly =
+    req.actor?.id === undefined ? true : !(await service.resolveMemberBenefits(req.actor.id));
+  const { rows, total } = await service.listMemberEvents(query, publicOnly);
 
   handleApiResponse(res, {
     responseType: RES_STATUS.GET,
@@ -504,11 +537,30 @@ export const listAttendees = handler(async (req, res) => {
 
 /* --- offline payment: the claim, and the decision on it --------------------- */
 
+/**
+ * The receipt off a multipart claim, or a 422 naming the field.
+ *
+ * Required, so this is a guard rather than a lookup. Multer has already applied
+ * the size ceiling; the bytes are sniffed further in, when the file is stored.
+ */
+const requiredProof = (req: Request): { buffer: Buffer; originalname: string } => {
+  if (!req.file) {
+    throw new AppError({
+      errorType: ERROR_TYPES.VALIDATION_ERROR,
+      messageKey: MSG_KEYS.VALIDATION_FAILED,
+      details: { fields: { proof: 'billing.proofRequired' } },
+    });
+  }
+
+  return req.file;
+};
+
 /** `POST /events/registrations/:id/payment` — the payer says they have paid. */
 export const submitPayment = handler(async (req, res) => {
   const result = await eventPayment.submitPayment(
     BigInt(req.params.id as string),
     req.body as never,
+    requiredProof(req),
     {
       userId: req.actor?.id ?? null,
       ip: req.ip ?? null,
@@ -577,6 +629,13 @@ export const registerAsGuest = handler(async (req, res) => {
   });
 });
 
+/** `POST /public/events/booking/request-otp` — send a guest booking verification code. */
+export const requestBookingOtp = handler(async (req, res) => {
+  await registration.requestBookingOtp(req.body.email);
+
+  handleApiResponse(res, { responseType: RES_STATUS.ACTION, messageKey: 'auth.otpSent' });
+});
+
 /**
  * The booking a guest link opens, or 404.
  *
@@ -608,7 +667,7 @@ export const getGuestBooking = handler(async (req, res) => {
 export const submitGuestPayment = handler(async (req, res) => {
   const id = await resolveBooking(req.params.token as string);
 
-  const result = await eventPayment.submitGuestPayment(id, req.body as never, {
+  const result = await eventPayment.submitGuestPayment(id, req.body as never, requiredProof(req), {
     ip: req.ip ?? null,
     userAgent: req.get('user-agent') ?? null,
     requestId: req.requestId ?? null,
@@ -619,6 +678,33 @@ export const submitGuestPayment = handler(async (req, res) => {
     messageKey: 'event.paymentSubmitted',
     data: serialise(result),
   });
+});
+
+/**
+ * Stream a claim's receipt to staff or to the company that filed it.
+ *
+ * `attachment`, like every other file this API serves: a PDF or image that
+ * renders in the tab it was fetched from is a document executing in this
+ * origin's context. Entitlement is decided in the service, and a stranger gets
+ * 404 rather than 403 so ids cannot be probed.
+ */
+export const downloadPaymentProof = handler(async (req, res) => {
+  const isAdmin = req.actor?.type === 'ADMIN';
+
+  const file = await eventPayment.openProofForDownload(BigInt(req.params.id as string), {
+    userId: isAdmin ? null : (req.actor?.id ?? null),
+    isAdmin,
+  });
+
+  res.setHeader('Content-Type', file.mime);
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${file.filename.replace(/["\r\n]/g, '')}"`,
+  );
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, no-store');
+
+  file.stream.pipe(res);
 });
 
 /**
@@ -750,4 +836,49 @@ export const cancelOwnBooking = handler(async (req, res) => {
     messageKey: 'event.bookingCancelled',
     data: serialise(result),
   });
+});
+
+/* --- guests: "find my bookings" (D-3, D-6) ----------------------------------- */
+
+/** `POST /public/events/bookings/lookup/request-otp` — send a lookup code. */
+export const requestLookupOtp = handler(async (req, res) => {
+  await lookupService.requestLookupOtp(req.body.email);
+
+  handleApiResponse(res, { responseType: RES_STATUS.ACTION, messageKey: 'auth.otpSent' });
+});
+
+/** `POST /public/events/bookings/lookup` — every booking made with one email. */
+export const lookupBookings = handler(async (req, res) => {
+  const result = await lookupService.lookupBookings(req.body.email, req.body.otp_code);
+
+  handleApiResponse(res, { responseType: RES_STATUS.GET, data: serialise(result) });
+});
+
+/**
+ * `GET /public/events/bookings/lookup/invoice/:invoiceId/pdf` — a guest's own copy.
+ *
+ * No session: the `lookup_token` from the request above stands in for one, and
+ * `verifyBookingLookupToken` re-derives the email from it rather than trusting
+ * anything in the path. `isAdmin: false` matters here — the guest is authorised
+ * by `guestEmail` alone, through the guard `getInvoicePdf` applies.
+ */
+export const downloadLookupInvoicePdf = handler(async (req, res) => {
+  await lookupService.assertLookupEnabled();
+
+  const email = verifyBookingLookupToken(bearerToken(req.get('authorization')) ?? '');
+
+  const file = await memberService.getInvoicePdf(BigInt(req.params.invoiceId as string), {
+    memberId: null,
+    isAdmin: false,
+    guestEmail: email,
+  });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${file.filename.replace(/["\r\n]/g, '')}"`,
+  );
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, no-store');
+  file.stream.pipe(res);
 });

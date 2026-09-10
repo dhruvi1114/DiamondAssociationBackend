@@ -162,6 +162,10 @@ model Member {
   /// Invoices raised against this company.
   invoices Invoice[]
 
+  /// Event bookings this company made directly (as opposed to a guest booking
+  /// later linked to it — see `linked_guest_registrants`).
+  event_registrations EventRegistration[]
+
   /// Receipts issued for this company's paid invoices.
   receipts Receipt[]
 
@@ -184,6 +188,10 @@ model Member {
 
   /// Invitations this firm has sent.
   team_invites MemberTeamInvite[]
+
+  /// Guest bookings later recognised as this company's (D-5, D-9). Visibility
+  /// only — the registration and invoice rows stay guest-owned.
+  linked_guest_registrants GuestRegistrant[]
 
   @@index([status, createdAt(sort: Desc)])
   @@index([company_type_id])

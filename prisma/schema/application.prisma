@@ -473,6 +473,14 @@ model ApprovalStage {
   /// Whether approving here approves the whole application.
   is_final Boolean @default(false)
 
+  /// Whether this stage takes part in the flow. An inactive stage is SKIPPED,
+  /// never deleted: its decision history stays readable, the applications parked
+  /// on it keep resolving, and `sequence` keeps its value so switching the stage
+  /// back on restores its exact position with no migration. Deleting is not an
+  /// option anyway — `ApprovalRequest.current_stage_id` and `ApprovalAction`
+  /// both RESTRICT. `ApprovalWorkflow` carries the same flag for the same reason.
+  is_active Boolean @default(true)
+
   /// Target turnaround in hours. Surfaced as an "overdue" badge; no automatic
   /// escalation in the MVP.
   sla_hours Int?

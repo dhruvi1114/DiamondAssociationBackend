@@ -34,7 +34,9 @@
     "copy:assets": "node -e \"require('fs').cpSync('src/locales','dist/locales',{recursive:true,filter:(s)=>!s.endsWith('.ts')}); require('fs').cpSync('src/assets','dist/assets',{recursive:true})\"",
     "otp": "tsx scripts/show-otp.ts",
     "backfill:resubmit-links": "tsx scripts/backfill-resubmit-links.ts",
-    "backfill:member-documents": "tsx scripts/backfill-member-documents.ts"
+    "backfill:member-documents": "tsx scripts/backfill-member-documents.ts",
+    "backfill:guest-booking-links": "tsx scripts/backfill-guest-booking-links.ts",
+    "backfill:owner-rows": "tsx scripts/backfill-owner-rows.ts"
   },
   "lint-staged": {
     "*.{ts,tsx,js,json,md}": [

@@ -391,6 +391,13 @@ model FeePlanStructure {
   updated_by AdminUser? @relation("FeeStructureUpdatedBy", fields: [updated_by_admin_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
   @@index([is_active, createdAt(sort: Desc)])
+  /// Both indexes already exist in the database — `20260908060000_fee_structure_actors`
+  /// created them and the model never declared them back. Undeclared, every later
+  /// `prisma migrate dev` generated a DROP for both, so any new migration silently
+  /// carried away the indexes behind two foreign keys. Declared here, the schema and
+  /// the database agree and the drift stops.
+  @@index([created_by_admin_id])
+  @@index([updated_by_admin_id])
   @@map("FeePlanStructures")
 }
 

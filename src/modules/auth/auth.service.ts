@@ -41,6 +41,8 @@ import type {
 import { getAdminAccess, invalidateAdminAccess } from '@modules/rbac/rbac.cache';
 import { loadAdminAccess } from '@modules/rbac/rbac.repository';
 import { activateInvitedTeamRow } from '@modules/member/team.activation';
+import { linkVerifiedGuestBookings } from '@modules/event/booking.linking';
+import { resolveMemberBenefits } from '@modules/event/event.service';
 import { AppError } from '@utils/appError';
 import { signAdminAccessToken, signMemberAccessToken } from '@utils/jwt';
 
@@ -901,6 +903,32 @@ export const issueInitialPasswordLink = async (
   });
 };
 
+/**
+ * Attach any event bookings this member made as a guest, after their account is live.
+ *
+ * OUTSIDE the password transaction, and it cannot throw.
+ *
+ * Inside it, a failure here would roll back the password and lock the member out of
+ * the account they were just given — to save them from missing rows on a list. The
+ * thing that must be atomic (the password write) stays atomic; the thing that is
+ * recoverable (linking a guest row to a member) is allowed to fail here and be
+ * re-run instead. `scripts/backfill-guest-booking-links.ts` is the re-run.
+ */
+export const attachBookingsAfterActivation = async (userId: bigint): Promise<void> => {
+  try {
+    const linked = await linkVerifiedGuestBookings(prisma, userId);
+
+    if (linked > 0) {
+      logger.info('events.guestBookingsLinked', { userId: userId.toString(), linked });
+    }
+  } catch (error) {
+    logger.error('events.guestBookingLinkFailed', {
+      userId: userId.toString(),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
 /** Consume an approval email link and set the member's first password. */
 export const setInitialPassword = async (
   input: { token: string; password: string },
@@ -952,6 +980,8 @@ export const setInitialPassword = async (
       requestId: context.requestId,
     });
   });
+
+  await attachBookingsAfterActivation(user.id);
 };
 
 /** In-session password change. Revokes every OTHER session, keeps this one alive. */
@@ -1014,6 +1044,9 @@ export const me = async (userId: bigint): Promise<MemberMeResponse> => {
       // M3 creates the Members row when an application starts (ADR-016).
       has_member_record: false,
       can_change_password: true,
+      // See the field comment on `member_benefits` in auth.types.ts — computed
+      // once, from the same rule the event-pricing paths use.
+      member_benefits: await resolveMemberBenefits(userId),
     },
   };
 };

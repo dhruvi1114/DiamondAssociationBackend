@@ -1,7 +1,8 @@
 import type { NextFunction, Request, Response, RequestHandler } from 'express';
 import { MemberStatus } from '@prisma/client';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
-import { RES_STATUS } from '@constant/message.constant';
+import { MSG_KEYS, RES_STATUS } from '@constant/message.constant';
+import * as paymentClaim from '@modules/billing/paymentClaim.service';
 import * as documentService from '@modules/document/document.service';
 import * as logo from '@modules/member/member.logo.service';
 import * as service from '@modules/member/member.service';
@@ -409,18 +410,48 @@ export const recordInvoicePayment = handler(async (req, res) => {
   });
 });
 
-export const payOwnInvoice = handler(async (req, res) => {
+/**
+ * The receipt off a multipart claim, or a 422 naming the field.
+ *
+ * Required, so this is a guard rather than a lookup. Multer has already applied
+ * the size ceiling; the bytes are sniffed further in, when the file is stored.
+ */
+const requiredProof = (req: Request): { buffer: Buffer; originalname: string } => {
+  if (!req.file) {
+    throw new AppError({
+      errorType: ERROR_TYPES.VALIDATION_ERROR,
+      messageKey: MSG_KEYS.VALIDATION_FAILED,
+      details: { fields: { proof: 'billing.proofRequired' } },
+    });
+  }
+
+  return req.file;
+};
+
+/**
+ * `POST /members/me/invoices/:invoiceId/claim` — "I have paid this invoice".
+ *
+ * Replaces `payOwnInvoice`, which marked an invoice PAID and activated the
+ * membership on one click, with no reference, no receipt and nobody checking.
+ * Membership buys a public directory listing, so it is not granted on the
+ * payer's word: this files a claim, and an admin settles it in the same queue
+ * that already handles event payments.
+ */
+export const claimOwnInvoicePayment = handler(async (req, res) => {
   const member = await ownMember(req);
-  const updated = await service.payOwnInvoice(
+
+  const submission = await paymentClaim.submitInvoiceClaim(
     member.id,
     BigInt(req.params.invoiceId as string),
-    actor(req),
+    req.body as never,
+    requiredProof(req),
+    { userId: req.actor?.id ?? null },
   );
 
   handleApiResponse(res, {
-    responseType: RES_STATUS.ACTION,
-    messageKey: 'member.invoicePaid',
-    data: serialise(updated),
+    responseType: RES_STATUS.CREATE,
+    messageKey: 'billing.claimSubmitted',
+    data: serialise(submission),
   });
 });
 

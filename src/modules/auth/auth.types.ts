@@ -166,6 +166,22 @@ export interface MemberMeResponse {
     has_member_record: boolean;
     /** The password can be changed in-session (always true for a live session). */
     can_change_password: boolean;
+    /**
+     * Entitled to member benefits RIGHT NOW — member event pricing, member-only
+     * events, the directory, and so on.
+     *
+     * An approved member who has not yet paid their membership invoice IS a
+     * member (they can still log in, see their profile, and pay), but gets
+     * none of those benefits until the invoice clears — this is that
+     * distinction, computed once in `event.service.resolveMemberBenefits` from
+     * the same rule the pricing paths use, so clients stop inferring
+     * entitlement from "a token exists" the way the events list used to.
+     *
+     * Default to the non-member experience when this is missing, unknown, or
+     * still loading: showing the higher price and charging the lower one is
+     * recoverable, the reverse is not.
+     */
+    member_benefits: boolean;
   };
 }
 

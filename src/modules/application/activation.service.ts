@@ -20,6 +20,7 @@ import {
   type RenewalBasis,
 } from '@helpers/settings';
 import { planTerm } from '@helpers/membershipTerm';
+import { logger } from '@logger/logger';
 import { queueNotifications } from '@notifications/outbox';
 import { revokeApplicationAccessTokens } from '@modules/application/application.tokens';
 import * as authService from '@modules/auth/auth.service';
@@ -157,38 +158,55 @@ export const adoptApplicationDocuments = async (
     });
     if (already) continue;
 
-    const destination = buildStorageKey(
-      ['members', memberId.toString(), row.document_type_id.toString()],
-      row.original_name,
-    );
+    // Caught per document, not around the whole loop: a storage failure on one
+    // file must not cost the member the other documents that copied cleanly.
+    // Each iteration is independent (its own put + create), so skipping one and
+    // continuing loses the least — the alternative, one catch around the whole
+    // call, would turn one bad file into zero documents adopted.
+    try {
+      const destination = buildStorageKey(
+        ['members', memberId.toString(), row.document_type_id.toString()],
+        row.original_name,
+      );
 
-    const stored = await storage.current.put(
-      destination,
-      await storage.current.getStream(row.file_path),
-      { mime: row.mime_type, size: Number(row.size_bytes) },
-    );
-    keys.push(stored.key);
+      const stored = await storage.current.put(
+        destination,
+        await storage.current.getStream(row.file_path),
+        { mime: row.mime_type, size: Number(row.size_bytes) },
+      );
 
-    await tx.memberDocument.create({
-      data: {
-        member_id: memberId,
-        document_type_id: row.document_type_id,
-        side: row.side,
-        file_path: stored.key,
-        original_name: row.original_name,
-        mime_type: row.mime_type,
-        size_bytes: row.size_bytes,
-        checksum_sha256: row.checksum_sha256,
-        version: 1,
-        // The reviewer's decision travels with the file. Re-verifying a document
-        // the committee already accepted is work the approval already did.
-        verification_status: row.verification_status,
-        verified_by_admin_id: row.verified_by_admin_id,
-        verified_at: row.verified_at,
-        remarks: row.remarks,
-      },
-    });
-    copied += 1;
+      await tx.memberDocument.create({
+        data: {
+          member_id: memberId,
+          document_type_id: row.document_type_id,
+          side: row.side,
+          file_path: stored.key,
+          original_name: row.original_name,
+          mime_type: row.mime_type,
+          size_bytes: row.size_bytes,
+          checksum_sha256: row.checksum_sha256,
+          version: 1,
+          // The reviewer's decision travels with the file. Re-verifying a document
+          // the committee already accepted is work the approval already did.
+          verification_status: row.verification_status,
+          verified_by_admin_id: row.verified_by_admin_id,
+          verified_at: row.verified_at,
+          remarks: row.remarks,
+        },
+      });
+
+      keys.push(stored.key);
+      copied += 1;
+    } catch (error) {
+      // Does NOT fail the approval (see docstring above). Visible here, and
+      // re-runnable by scripts/backfill-member-documents.ts, which re-checks
+      // this same (member, type, side) and copies it once storage recovers.
+      logger.error('application.documentCopyFailed', {
+        applicationId: application.id.toString(),
+        memberId: memberId.toString(),
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   return { copied, keys };

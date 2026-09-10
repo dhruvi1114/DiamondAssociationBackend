@@ -341,9 +341,21 @@ export const browseFacets = async (publicOnly: boolean): Promise<BrowseFacets> =
 export const listPublicEvents = (page: number, limit: number, filters?: BrowseFilters) =>
   browseEvents(true, page, limit, true, filters);
 
-/** Published events of both kinds — for a signed-in member. */
-export const listMemberEvents = (page: number, limit: number, filters?: BrowseFilters) =>
-  browseEvents(false, page, limit, true, filters);
+/**
+ * Published events, for a signed-in member.
+ *
+ * `publicOnly` is a real parameter here, not a hardcoded `false`: a signed-in
+ * member without current member benefits (e.g. an approved applicant who has
+ * not yet paid) must see the same public-only set a guest does, so the
+ * caller decides this from `event.service.resolveMemberBenefits`, not from
+ * "this request carries a token."
+ */
+export const listMemberEvents = (
+  page: number,
+  limit: number,
+  filters?: BrowseFilters,
+  publicOnly = false,
+) => browseEvents(publicOnly, page, limit, true, filters);
 
 /**
  * One public event by slug, or null.

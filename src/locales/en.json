@@ -171,7 +171,14 @@
     "refundApproved": "Refund approved and ready to send",
     "refundRejected": "Refund rejected",
     "refundCompleted": "Refund marked as sent",
-    "refundFailed": "Refund marked as failed"
+    "refundFailed": "Refund marked as failed",
+    "proofEmpty": "That file is empty",
+    "proofTooLarge": "That file is too large",
+    "proofUnsupportedType": "Attach a JPG, PNG or PDF of your payment receipt",
+    "proofRequired": "Attach your payment receipt",
+    "proofNotFound": "That payment receipt is not available",
+    "claimAlreadyPending": "A payment for this invoice is already being checked",
+    "claimSubmitted": "Payment details received. We will confirm once verified."
   },
   "payment": {
     "notFound": "Payment not found",
@@ -363,7 +370,8 @@
     "eventEndsBeforeItStarts": "The event cannot end before it starts",
     "registrationClosesAfterStart": "Registration must close before the day the event starts",
     "registrationWindowInverted": "Registration cannot close before it opens",
-    "priceTiersOverlap": "Two price tiers cover the same dates"
+    "priceTiersOverlap": "Two price tiers cover the same dates",
+    "invalidPaymentMethod": "Choose how you paid"
   },
   "masters": {
     "invalidCode": "Use capitals, digits and underscores only, starting with a letter — for example GROWER",

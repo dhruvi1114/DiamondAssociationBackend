@@ -60,10 +60,18 @@ export const registrationFields = {
   company_type_id: z.string().regex(/^\d+$/, 'validation.invalidId'),
   address_line1: trimmed(200).min(1, 'validation.requiredFields'),
   address_line2: trimmed(200).nullish(),
+  /*
+    Exactly six digits (client decision, 2026-09-09). India's PIN is a six-digit
+    code and nothing else; `{4,10}` was written to be permissive about foreign
+    postcodes, but this form only registers Indian firms — `country_id` is
+    India — so the range was accepting typos rather than accommodating anyone.
+    A five-digit PIN reaches the post office as a wrong address, and it is
+    cheaper to refuse it here than to discover it on a returned invoice.
+  */
   pincode: z
     .string()
     .trim()
-    .regex(/^[0-9]{4,10}$/, 'member.invalidPincode'),
+    .regex(/^[0-9]{6}$/, 'member.invalidPincode'),
   country_id: z.string().regex(/^\d+$/, 'validation.invalidId'),
   state_id: z.string().regex(/^\d+$/, 'validation.invalidId'),
   city_id: optionalId,
@@ -72,10 +80,23 @@ export const registrationFields = {
     .trim()
     .regex(/^[+]?[0-9\s-]{7,20}$/, 'validation.invalidPhone')
     .nullish(),
+  /*
+    Exactly ten digits, no country code, no spaces (client decision, 2026-09-09).
+
+    The old expression took anything from 7 to 20 characters with optional `+`,
+    spaces and dashes, which meant the same phone reached the database as
+    "+91 98250 12345", "098250 12345" and "9825012345" depending on who typed
+    it — three strings nobody can match, dial or dedupe against each other.
+    Ten bare digits is what an Indian mobile IS; the `+91` is a dialling prefix
+    the platform can add wherever it needs one.
+
+    `landline` below is deliberately left permissive: it carries STD codes of
+    varying length and is optional besides.
+  */
   mobile: z
     .string({ required_error: 'validation.invalidPhone' })
     .trim()
-    .regex(/^[+]?[0-9][0-9\s-]{6,19}$/, 'validation.invalidPhone'),
+    .regex(/^[0-9]{10}$/, 'validation.invalidPhone'),
   category_ids: z
     .array(z.string().regex(/^\d+$/, 'validation.invalidId'))
     .min(1, 'validation.requiredFields')

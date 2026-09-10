@@ -1,15 +1,25 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { END_POINTS } from '@constant';
-import { authenticate, authenticateAdmin, authorize, validateRequest } from '@middleware';
+import {
+  authenticate,
+  authenticateAdmin,
+  authorize,
+  rateLimiters,
+  validateRequest,
+} from '@middleware';
 import * as controller from '@modules/event/event.controller';
+import { PROOF_MAX_BYTES } from '@modules/billing/paymentProof.service';
 import { BANNER_MAX_BYTES } from '@modules/event/event.media.service';
 import {
+  bookingLookupSchema,
   listRegistrationsSchema,
   registerAsGuestSchema,
   registerAsMemberSchema,
   rejectPaymentSchema,
   rejectRegistrationSchema,
+  requestBookingOtpSchema,
+  requestLookupOtpSchema,
   submitPaymentSchema,
 } from '@modules/event/registration.types';
 import {
@@ -19,7 +29,7 @@ import {
   listEventsSchema,
   updateEventSchema,
 } from '@modules/event/event.types';
-import { idParamSchema } from '@modules/member/member.types';
+import { idParamSchema, ownInvoicePaymentParamsSchema } from '@modules/member/member.types';
 
 /**
  * In memory, like every other upload here: the bytes are sniffed before anything
@@ -29,6 +39,18 @@ import { idParamSchema } from '@modules/member/member.types';
 const uploadBanner = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: BANNER_MAX_BYTES, files: 1 },
+});
+
+/**
+ * The receipt attached to a payment claim.
+ *
+ * Same memory-backed rules as every other upload here. This ceiling only stops
+ * a large body being buffered; `storeProof` applies the real one again against
+ * the actual size, and sniffs the bytes before anything is written.
+ */
+const uploadProof = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: PROOF_MAX_BYTES, files: 1 },
 });
 
 /** `/api/v1/admin/events` — staff-facing event management (A-21…A-22). */
@@ -168,6 +190,16 @@ eventAdminRouter.get(
   controller.listPaymentSubmissions,
 );
 
+/* The receipt behind a claim. `payment.view`, the same permission that opens the
+   queue — being allowed to see a claim and not the evidence for it is not a
+   distinction worth making. */
+eventAdminRouter.get(
+  '/payment-submissions/:id/proof',
+  authorize('payment.view'),
+  validateRequest({ params: idParamSchema }),
+  controller.downloadPaymentProof,
+);
+
 eventAdminRouter.post(
   '/payment-submissions/:id/verify',
   authorize('payment.record'),
@@ -200,15 +232,58 @@ eventPublicRouter.get(`${END_POINTS.EVENTS}/:slug/banner`, controller.serveBanne
 
 eventPublicRouter.post(
   `${END_POINTS.EVENTS}/:slug/register`,
+  rateLimiters.guestBooking,
   validateRequest({ body: registerAsGuestSchema }),
   controller.registerAsGuest,
 );
 
 // The token IS the credential, so these carry no session and no id in the path.
-eventPublicRouter.get(`${END_POINTS.EVENTS}/booking/:token`, controller.getGuestBooking);
+// `request-otp` is declared before `booking/:token`, or the token pattern
+// swallows it.
+eventPublicRouter.post(
+  `${END_POINTS.EVENTS}/booking/request-otp`,
+  rateLimiters.otp,
+  validateRequest({ body: requestBookingOtpSchema }),
+  controller.requestBookingOtp,
+);
+
+/*
+  "Find my bookings" (D-3, D-6). Plural `bookings/lookup/...`, not `booking/`, is
+  what keeps these from colliding with the singular `booking/:token` route below
+  — declared before it anyway, since a param route is greedy regardless.
+*/
+eventPublicRouter.post(
+  `${END_POINTS.EVENTS}/bookings/lookup/request-otp`,
+  rateLimiters.otp,
+  validateRequest({ body: requestLookupOtpSchema }),
+  controller.requestLookupOtp,
+);
 
 eventPublicRouter.post(
+  `${END_POINTS.EVENTS}/bookings/lookup`,
+  rateLimiters.otp,
+  validateRequest({ body: bookingLookupSchema }),
+  controller.lookupBookings,
+);
+
+eventPublicRouter.get(
+  `${END_POINTS.EVENTS}/bookings/lookup/invoice/:invoiceId/pdf`,
+  validateRequest({ params: ownInvoicePaymentParamsSchema }),
+  controller.downloadLookupInvoicePdf,
+);
+
+eventPublicRouter.get(`${END_POINTS.EVENTS}/booking/:token`, controller.getGuestBooking);
+
+/*
+  Multer FIRST, then the body schema.
+
+  A `multipart/form-data` body does not exist as fields until multer has parsed
+  it, so validating before it runs would read an empty object and reject every
+  claim. Every text field arrives as a string, which is why the schema coerces.
+*/
+eventPublicRouter.post(
   `${END_POINTS.EVENTS}/booking/:token/payment`,
+  uploadProof.single('proof'),
   validateRequest({ body: submitPaymentSchema }),
   controller.submitGuestPayment,
 );
@@ -259,8 +334,21 @@ eventMemberRouter.post(
   controller.cancelOwnBooking,
 );
 
+/* The member's own copy, so they can check what they attached. The service
+   scopes it to the company that filed the claim and answers 404 to everyone
+   else, so this route and the admin one above share one rule. */
+eventMemberRouter.get(
+  '/payment-submissions/:id/proof',
+  validateRequest({ params: idParamSchema }),
+  controller.downloadPaymentProof,
+);
+
 eventMemberRouter.post(
   '/registrations/:id/payment',
-  validateRequest({ params: idParamSchema, body: submitPaymentSchema }),
+  /* Params validated before multer so a malformed id is a 422 rather than
+     several megabytes buffered and then thrown away. */
+  validateRequest({ params: idParamSchema }),
+  uploadProof.single('proof'),
+  validateRequest({ body: submitPaymentSchema }),
   controller.submitPayment,
 );

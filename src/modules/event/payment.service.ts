@@ -2,6 +2,7 @@ import { InvoiceStatus, Prisma } from '@prisma/client';
 import { ACTOR_TYPES, AUDIT_ACTIONS } from '@constant/audit.constant';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { prisma } from '@db/prisma';
+import type { Db } from '@db/prisma';
 import { writeAudit } from '@helpers/audit';
 import { nextPaymentNumber, nextReceiptNumber } from '@modules/billing/numbering';
 import { MANUAL_PROVIDER, PAYMENT_STATUS } from '@modules/billing/payment.constants';
@@ -14,6 +15,15 @@ import * as notify from '@modules/event/notify';
 import * as seats from '@modules/event/registration.repository';
 import { holdDeadline } from '@modules/event/registration.service';
 import { touchedByAdmin, touchedByMember } from '@modules/event/actorColumns';
+import {
+  proofMimeForKey,
+  removeProof,
+  storeProof,
+  type UploadedFile,
+} from '@modules/billing/paymentProof.service';
+import { getStorage } from '@helpers/storage';
+import { activateMembershipForInvoice } from '@modules/billing/membershipActivation';
+import * as membershipNotify from '@modules/billing/membershipNotify';
 import { AppError } from '@utils/appError';
 import type { AdminActor } from '@modules/event/registration.service';
 
@@ -38,7 +48,6 @@ export interface SubmitPaymentInput {
   reference_no: string;
   amount: number;
   paid_on: Date;
-  proof_path?: string | null;
 }
 
 /**
@@ -47,10 +56,15 @@ export interface SubmitPaymentInput {
  * The hold clock **stops** here by clearing `expires_at`: the payer has done
  * their part, and letting the sweep release their seats while staff work through
  * the queue would punish them for the association's response time.
+ *
+ * The receipt is required, not optional. A claim is an assertion until somebody
+ * checks it, and a reference number alone sends the checker to their bank portal
+ * for every single claim; the attachment is what makes the queue workable.
  */
 export const submitPayment = async (
   registrationId: bigint,
   input: SubmitPaymentInput,
+  proof: UploadedFile,
   actor: {
     userId: bigint | null;
     ip: string | null;
@@ -58,6 +72,36 @@ export const submitPayment = async (
     requestId: string | null;
   },
 ) => {
+  const registration = await loadClaimableRegistration(registrationId);
+
+  /*
+    Stored BEFORE the transaction, deliberately. Writing several megabytes
+    through the storage adapter is slow and can reach the network, and holding a
+    database transaction open across it puts a row lock behind an I/O call.
+
+    The cost is that a failed transaction leaves an orphaned file, which the
+    catch below clears on a best effort. That is the right way round: a wasted
+    object costs disk, where a claim lost to a storage hiccup costs somebody
+    their seats.
+  */
+  const stored = await storeProof(registration.invoice.id, proof);
+
+  try {
+    return await claimPayment(registrationId, registration, input, stored.key, actor);
+  } catch (error) {
+    await removeProof(stored.key);
+
+    throw error;
+  }
+};
+
+/**
+ * The booking a claim is being made against, or the reason it cannot be.
+ *
+ * Its own function so the claim below can be typed from it — and so the three
+ * refusals are read in one place rather than at the top of a long procedure.
+ */
+const loadClaimableRegistration = async (registrationId: bigint) => {
   const registration = await prisma.eventRegistration.findFirst({
     where: { id: registrationId, deletedAt: null },
     include: { invoice: true, event: { select: { title: true, start_at: true } } },
@@ -69,16 +113,34 @@ export const submitPayment = async (
   }
   if (!registration.invoice) throw conflict('event.noInvoiceToPay');
 
+  /* Re-spread so `invoice` is non-null in the RETURN type, not merely narrowed
+     inside this function — the caller stores the proof against its id. */
+  return { ...registration, invoice: registration.invoice };
+};
+
+/** The write itself, once the receipt is safely stored. */
+const claimPayment = async (
+  registrationId: bigint,
+  registration: Awaited<ReturnType<typeof loadClaimableRegistration>>,
+  input: SubmitPaymentInput,
+  proofPath: string,
+  actor: {
+    userId: bigint | null;
+    ip: string | null;
+    userAgent: string | null;
+    requestId: string | null;
+  },
+) => {
   return prisma.$transaction(async (tx) => {
     const submission = await tx.paymentSubmission.create({
       data: {
-        invoice_id: registration.invoice!.id,
+        invoice_id: registration.invoice.id,
         submitted_by_user_id: actor.userId,
         method: input.method,
         reference_no: input.reference_no,
         amount: new Prisma.Decimal(input.amount),
         paid_on: input.paid_on,
-        proof_path: input.proof_path ?? null,
+        proof_path: proofPath,
         status: SUBMISSION_STATUS.PENDING,
         created_by_user_id: actor.userId,
       },
@@ -208,6 +270,30 @@ export const verifyPayment = async (id: bigint, actor: AdminActor, now = new Dat
       },
     });
 
+    /*
+      A membership invoice has no event behind it, and settling one has to do
+      more than mark it paid: the terms it bought go live and a first-time member
+      moves PENDING → ACTIVE. Without this, a member filed a claim, an admin
+      approved it, the invoice read PAID — and their membership sat pending with
+      nothing left to move it.
+
+      Guarded on `member_id` rather than on invoice type: a guest's event invoice
+      has no member to activate, and a member's event invoice has no membership
+      term pointing at it, so the call is a no-op there either way.
+    */
+    if (invoice.member_id) {
+      await activateMembershipForInvoice(tx, {
+        invoiceId: invoice.id,
+        memberId: invoice.member_id,
+        invoiceNumber: invoice.invoice_number,
+        changedByAdminId: actor.adminId,
+      });
+
+      const notice = await membershipNotice(tx, invoice);
+
+      if (notice) await membershipNotify.notifyClaimVerified(tx, notice);
+    }
+
     const registration = await tx.eventRegistration.findFirst({
       where: { invoice_id: invoice.id, deletedAt: null },
       include: {
@@ -278,6 +364,57 @@ export const verifyPayment = async (id: bigint, actor: AdminActor, now = new Dat
 };
 
 /**
+ * Who to write to about a membership payment, or null when it is not one.
+ *
+ * Null for an event invoice and for a guest: those are told through the booking
+ * notifications, which say something this one cannot — what happened to the
+ * seats. A membership invoice has no booking, so without this a member heard
+ * nothing at all either way.
+ */
+const membershipNotice = async (
+  db: Db,
+  invoice: {
+    id: bigint;
+    member_id: bigint | null;
+    invoice_number: string;
+    total_amount: Prisma.Decimal;
+  },
+) => {
+  if (!invoice.member_id) return null;
+
+  const hasBooking = await db.eventRegistration.count({
+    where: { invoice_id: invoice.id, deletedAt: null },
+  });
+
+  if (hasBooking > 0) return null;
+
+  const member = await db.member.findFirst({
+    where: { id: invoice.member_id },
+    select: {
+      id: true,
+      company_name: true,
+      /* The primary contact — every company has one, and it is the address the
+         association already writes to about money. */
+      contacts: {
+        where: { is_primary: true, deletedAt: null },
+        take: 1,
+        select: { email: true },
+      },
+    },
+  });
+
+  if (!member) return null;
+
+  return {
+    memberId: member.id,
+    toAddress: member.contacts[0]?.email ?? null,
+    companyName: member.company_name,
+    invoiceNumber: invoice.invoice_number,
+    amount: invoice.total_amount.toFixed(2),
+  };
+};
+
+/**
  * Staff cannot find the money.
  *
  * The seats stay held and the clock restarts, so the payer has a full window to
@@ -336,6 +473,16 @@ export const rejectPayment = async (
       );
     }
 
+    /*
+      A membership claim has no booking, so the branch above sends nothing. The
+      member would otherwise learn that their payment was not traced by noticing,
+      days later, that they are still not active — the invoice is untouched and
+      the screen looks exactly as it did before they claimed.
+    */
+    const notice = await membershipNotice(tx, submission.invoice);
+
+    if (notice) await membershipNotify.notifyClaimRejected(tx, notice, input.reason);
+
     await writeAudit(tx, {
       action: AUDIT_ACTIONS.PAYMENT_SUBMISSION_REJECTED,
       entityName: 'PaymentSubmissions',
@@ -374,14 +521,69 @@ export const CLAIMABLE_METHODS = [
 export const submitGuestPayment = async (
   registrationId: bigint,
   input: SubmitPaymentInput,
+  proof: UploadedFile,
   request: { ip: string | null; userAgent: string | null; requestId: string | null },
 ) =>
-  submitPayment(registrationId, input, {
+  submitPayment(registrationId, input, proof, {
     userId: null,
     ip: request.ip,
     userAgent: request.userAgent,
     requestId: request.requestId,
   });
+
+/**
+ * Open a claim's receipt for whoever is entitled to see it.
+ *
+ * Staff, because verifying is the whole point of the file; and the company that
+ * filed the claim, so a member can check they attached the right screenshot.
+ * Anyone else gets **404, never 403** — the same rule the document downloads
+ * follow, because a 403 confirms the id exists and turns this into an oracle
+ * for counting the association's payments.
+ *
+ * Scoped to the company rather than the login: the colleague who paid and the
+ * colleague who checks are often different people at the same firm, which is how
+ * every other member-facing read on this platform is scoped.
+ */
+export const openProofForDownload = async (
+  submissionId: bigint,
+  viewer: { userId: bigint | null; isAdmin: boolean },
+) => {
+  const submission = await prisma.paymentSubmission.findFirst({
+    where: { id: submissionId },
+    select: { proof_path: true, reference_no: true, invoice: { select: { member_id: true } } },
+  });
+
+  if (!submission?.proof_path) throw notFound('billing.proofNotFound');
+
+  if (!viewer.isAdmin) {
+    const memberId = submission.invoice?.member_id ?? null;
+
+    const allowed =
+      memberId !== null &&
+      viewer.userId !== null &&
+      (await prisma.member.count({
+        where: {
+          id: memberId,
+          deletedAt: null,
+          team_users: { some: { user_id: viewer.userId, status: 1 } },
+        },
+      })) > 0;
+
+    if (!allowed) throw notFound('billing.proofNotFound');
+  }
+
+  const mime = proofMimeForKey(submission.proof_path);
+  const extension = submission.proof_path.slice(submission.proof_path.lastIndexOf('.'));
+
+  return {
+    stream: await getStorage().getStream(submission.proof_path),
+    /* Named after the claim, not after whatever the payer called the file on
+       their phone — the original name is not stored, and "IMG_4821.jpg" in a
+       verifier's downloads folder belongs to nothing. */
+    filename: `payment-proof-${submission.reference_no.replace(/[^A-Za-z0-9._-]/g, '')}${extension}`,
+    mime,
+  };
+};
 
 /**
  * The claims queue, for the admin screen.

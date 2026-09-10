@@ -7,6 +7,8 @@ import type {
   NotificationChannelAdapter,
   RenderedNotification,
 } from '@notifications/types';
+import { ctaLabelFor } from '@notifications/emailCta';
+import { loadBranding, renderEmailHtml, toPlainText } from '@notifications/emailLayout';
 
 /**
  * Email delivery via nodemailer.
@@ -18,6 +20,13 @@ import type {
  *
  * A send failure throws. The drain owns the retry policy, so a channel that
  * swallowed errors would silently mark undelivered mail as SENT.
+ *
+ * Every message goes out **multipart**: the template body verbatim as `text`,
+ * and that same body poured into the card in `emailLayout.ts` as `html`. Both
+ * halves, always. HTML-only mail is treated as a spam signal by several
+ * providers, and a client set to prefer text — or a screen reader — reads the
+ * text half. The layout is applied here rather than in the templates so all
+ * forty share one design and none of them has to hold markup.
  */
 export class EmailChannel implements NotificationChannelAdapter {
   public readonly channel = NotificationChannel.EMAIL;
@@ -58,6 +67,13 @@ export class EmailChannel implements NotificationChannelAdapter {
       return { providerMessageId: `console-${message.notificationId}` };
     }
 
+    const branding = await loadBranding();
+    const html = renderEmailHtml({
+      body: message.body,
+      ctaLabel: ctaLabelFor(message.templateCode),
+      branding,
+    });
+
     const info = await this.getTransporter().sendMail({
       from: environment.mail.from,
       to: message.toAddress,
@@ -69,7 +85,8 @@ export class EmailChannel implements NotificationChannelAdapter {
       */
       ...(message.replyTo ? { replyTo: message.replyTo } : {}),
       subject: message.subject ?? '',
-      text: message.body,
+      text: toPlainText(message.body),
+      html,
     });
 
     return { providerMessageId: info.messageId };

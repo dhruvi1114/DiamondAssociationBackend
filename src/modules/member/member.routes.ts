@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
+
+import { PROOF_MAX_BYTES } from '@modules/billing/paymentProof.service';
+import { submitPaymentSchema } from '@modules/event/registration.types';
 import { END_POINTS } from '@constant';
 import type { RequestHandler } from 'express';
 import { authenticate, authenticateAdmin, authorize, validateRequest } from '@middleware';
@@ -35,6 +38,18 @@ import { teamStatusSchema } from '@modules/member/team.types';
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+});
+
+/**
+ * The receipt attached to a payment claim.
+ *
+ * Its own, much smaller ceiling: a KYC document may be a scanned multi-page
+ * certificate, where a payment receipt is a phone screenshot. `storeProof`
+ * applies the same limit again against the real size and sniffs the bytes.
+ */
+const uploadProof = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: PROOF_MAX_BYTES, files: 1 },
 });
 
 /** `/api/v1/members` — the member's own company record (C-14…C-17). */
@@ -142,10 +157,21 @@ memberRouter.delete(
   controller.removeOwnDocument,
 );
 
+/*
+  `POST /me/invoices/:invoiceId/pay` stood here — no body, no reference, no
+  receipt, and the invoice came back PAID with the membership switched on. It is
+  replaced by a claim a person checks.
+
+  Params validated before multer so a malformed id is a 422 rather than several
+  megabytes buffered and then thrown away; the body schema runs after multer,
+  because a multipart body does not exist as fields until multer has parsed it.
+*/
 memberRouter.post(
-  '/me/invoices/:invoiceId/pay',
+  '/me/invoices/:invoiceId/claim',
   validateRequest({ params: ownInvoicePaymentParamsSchema }),
-  controller.payOwnInvoice,
+  uploadProof.single('proof'),
+  validateRequest({ body: submitPaymentSchema }),
+  controller.claimOwnInvoicePayment,
 );
 
 /**

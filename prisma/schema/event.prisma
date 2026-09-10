@@ -297,6 +297,21 @@ model GuestRegistrant {
   /// Country.
   country String @default("India") @db.VarChar(100)
 
+  /// When the company email was proven by OTP (UTC). NULL means unproven — which is
+  /// every row created before this existed, and every row booked while
+  /// `events.guest_booking_otp` is off. Only a non-NULL row may be attached to a
+  /// member account, because attaching an unproven address would let a stranger
+  /// hang a booking, and its unpaid invoice, on a real company.
+  email_verified_at DateTime? @db.Timestamptz(6)
+
+  /// The member this guest booking was later recognised as (D-5, D-9). Set only from
+  /// a verified email match. This is the WHOLE linking mechanism: the registration and
+  /// invoice rows stay guest-owned, because both carry a CHECK requiring exactly one of
+  /// member/guest, and an issued invoice must keep the party it was issued to.
+  linked_member_id BigInt?
+
+  linked_member Member? @relation(fields: [linked_member_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
   /// Row creation timestamp (UTC).
   createdAt DateTime @default(now()) @db.Timestamptz(6)
 
@@ -318,11 +333,15 @@ model GuestRegistrant {
   /// Invoices raised against this guest.
   invoices Invoice[]
 
+  /// Event bookings this guest made.
+  event_registrations EventRegistration[]
+
   /// Payments this guest has made.
   payments Payment[]
   receipts Receipt[]
 
   @@index([email])
+  @@index([linked_member_id])
   @@map("GuestRegistrants")
 }
 
@@ -478,6 +497,15 @@ model EventRegistration {
   /// The event booked.
   event Event @relation(fields: [event_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
+  /// The member who booked, when a member did. Mirrors Invoice.member: NO ACTION
+  /// on delete — a member with bookings is deactivated, never deleted out from
+  /// under them.
+  member Member? @relation(fields: [member_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  /// The guest who booked, when a non-member did. Mirrors
+  /// Invoice.guest_registrant.
+  guest_registrant GuestRegistrant? @relation(fields: [guest_registrant_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
   /// The bill for it, when there is one.
   invoice Invoice? @relation(fields: [invoice_id], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
@@ -490,6 +518,8 @@ model EventRegistration {
   @@index([event_id, status])
   @@index([status, expires_at])
   @@index([member_id, registered_at(sort: Desc)])
+  // `member_id` already leads the index above; `guest_registrant_id` had none.
+  @@index([guest_registrant_id])
   @@map("EventRegistrations")
 }
 

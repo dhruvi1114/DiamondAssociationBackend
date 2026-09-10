@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { Prisma } from '@prisma/client';
-import { audienceFor, resolveTier, unitPrice } from '@modules/event/event.pricing';
+import { Prisma, TermStatus } from '@prisma/client';
+import {
+  audienceFor,
+  effectiveMembershipValidTill,
+  resolveTier,
+  unitPrice,
+} from '@modules/event/event.pricing';
 
 const tier = (
   id: number,
@@ -111,6 +116,116 @@ describe('audienceFor', () => {
         membershipValidTill: validTill,
         graceDays: 0,
         on: at('2027-04-01T00:00:00.000Z'),
+      }),
+    ).toBe('NON_MEMBER');
+  });
+});
+
+describe('effectiveMembershipValidTill', () => {
+  const validTill = new Date('2026-10-08T00:00:00.000Z');
+
+  it('drops a PENDING_PAYMENT term — the invoice is unpaid, so it is not a membership yet', () => {
+    // Live bug, member 64 "Parthik": PENDING_PAYMENT term with a future
+    // valid_till was being priced as a member despite never having paid.
+    expect(
+      effectiveMembershipValidTill({ status: TermStatus.PENDING_PAYMENT, valid_till: validTill }),
+    ).toBeNull();
+  });
+
+  it('passes through an ACTIVE term', () => {
+    expect(effectiveMembershipValidTill({ status: TermStatus.ACTIVE, valid_till: validTill })).toBe(
+      validTill,
+    );
+  });
+
+  it('drops a CANCELLED term', () => {
+    expect(
+      effectiveMembershipValidTill({ status: TermStatus.CANCELLED, valid_till: validTill }),
+    ).toBeNull();
+  });
+
+  it('passes through an EXPIRED term unchanged, leaving grace to audienceFor', () => {
+    // EXPIRED is not excluded: audienceFor's graceDays window is the tolerance
+    // the association configured for a lapsed renewal. Dropping EXPIRED here
+    // would zero that grace period out for every member it exists to cover.
+    expect(
+      effectiveMembershipValidTill({ status: TermStatus.EXPIRED, valid_till: validTill }),
+    ).toBe(validTill);
+  });
+
+  it('treats having no term at all as no membership', () => {
+    expect(effectiveMembershipValidTill(null)).toBeNull();
+    expect(effectiveMembershipValidTill(undefined)).toBeNull();
+  });
+
+  it('end to end: PENDING_PAYMENT with a future valid_till still prices as NON_MEMBER', () => {
+    const term = { status: TermStatus.PENDING_PAYMENT, valid_till: validTill };
+
+    expect(
+      audienceFor({
+        membershipValidTill: effectiveMembershipValidTill(term),
+        graceDays: 30,
+        on: at('2026-09-10T00:00:00.000Z'),
+      }),
+    ).toBe('NON_MEMBER');
+  });
+
+  it('end to end: ACTIVE with a future valid_till prices as MEMBER', () => {
+    const term = { status: TermStatus.ACTIVE, valid_till: validTill };
+
+    expect(
+      audienceFor({
+        membershipValidTill: effectiveMembershipValidTill(term),
+        graceDays: 30,
+        on: at('2026-09-10T00:00:00.000Z'),
+      }),
+    ).toBe('MEMBER');
+  });
+
+  it('end to end: CANCELLED prices as NON_MEMBER regardless of valid_till', () => {
+    const term = { status: TermStatus.CANCELLED, valid_till: validTill };
+
+    expect(
+      audienceFor({
+        membershipValidTill: effectiveMembershipValidTill(term),
+        graceDays: 30,
+        on: at('2026-09-10T00:00:00.000Z'),
+      }),
+    ).toBe('NON_MEMBER');
+  });
+
+  it('end to end: EXPIRED inside the grace window still prices as MEMBER', () => {
+    const term = { status: TermStatus.EXPIRED, valid_till: validTill };
+
+    expect(
+      audienceFor({
+        membershipValidTill: effectiveMembershipValidTill(term),
+        graceDays: 30,
+        // 10 days past valid_till, well inside a 30-day grace window.
+        on: at('2026-10-18T00:00:00.000Z'),
+      }),
+    ).toBe('MEMBER');
+  });
+
+  it('end to end: EXPIRED beyond the grace window prices as NON_MEMBER', () => {
+    const term = { status: TermStatus.EXPIRED, valid_till: validTill };
+
+    expect(
+      audienceFor({
+        membershipValidTill: effectiveMembershipValidTill(term),
+        graceDays: 30,
+        // 31 days past valid_till, one day past a 30-day grace window.
+        on: at('2026-11-08T00:00:00.000Z'),
+      }),
+    ).toBe('NON_MEMBER');
+  });
+
+  it('end to end: no term at all prices as NON_MEMBER', () => {
+    expect(
+      audienceFor({
+        membershipValidTill: effectiveMembershipValidTill(null),
+        graceDays: 30,
+        on: at('2026-09-10T00:00:00.000Z'),
       }),
     ).toBe('NON_MEMBER');
   });

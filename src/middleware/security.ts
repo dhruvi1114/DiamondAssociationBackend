@@ -117,6 +117,31 @@ export const rateLimiters = {
     windowMs: FIFTEEN_MINUTES,
     limit: 40,
   }),
+
+  /**
+   * 40 / 15 min per IP — `POST /events/:slug/register`, the guest event booking.
+   *
+   * Same shape as `resubmitLink`, for the same reason: this is another
+   * unauthenticated write with no account behind it to suspend, so it gets its
+   * own budget rather than inheriting only the global cap.
+   *
+   * This is defence in depth, not what stops a guess against the OTP the
+   * booking may carry — `consumeBookingOtp`'s attempt ceiling is what stops
+   * that, and it is charged through the `prisma` singleton specifically so it
+   * survives the booking transaction rolling back. What this limiter stops is
+   * the cheap abuse an open write endpoint attracts on its own: scripted
+   * bookings, probing which shape of error comes back, seat-holding spam.
+   *
+   * The budget is deliberately generous. A real guest booking a handful of
+   * delegates, correcting a typo and resubmitting is a handful of requests, and
+   * being throttled mid-booking on a public form is how a paying registrant
+   * becomes a phone call.
+   */
+  guestBooking: rateLimit({
+    ...baseLimiterOptions,
+    windowMs: FIFTEEN_MINUTES,
+    limit: 40,
+  }),
 };
 
 /**

@@ -252,6 +252,27 @@ const SETTINGS: SettingSeed[] = [
     */
     is_public: false,
   },
+  {
+    key: 'events.guest_booking_otp',
+    value: 'false',
+    value_type: SettingValueType.BOOLEAN,
+    group: 'events',
+    description: 'Require an emailed code on the guest event booking company email.',
+    /*
+      Public, because the guest booking form has to know whether to render the
+      verify step before anyone has typed anything. It leaks nothing: it says how
+      the form behaves, which the form itself already shows.
+    */
+    is_public: true,
+  },
+  {
+    key: 'events.booking_lookup_enabled',
+    value: 'false',
+    value_type: SettingValueType.BOOLEAN,
+    group: 'events',
+    description: 'Serve the guest "find my bookings" page and its lookup endpoints.',
+    is_public: true,
+  },
 ];
 
 export const seedSystemSettings = async (prisma: PrismaClient): Promise<number> => {

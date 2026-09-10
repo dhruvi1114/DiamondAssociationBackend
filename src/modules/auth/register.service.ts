@@ -483,6 +483,35 @@ export const register = async (
             status: MemberStatus.DRAFT,
           });
 
+      /*
+        The owner's team row and contact — the same two rows
+        `provisionMember` (member.service.ts) writes alongside a fresh
+        `Members` row, and for the same reason: `findMemberByUserId` resolves
+        a login to its company through `MemberUsers`, so a member created
+        without that row is invisible to the very login that owns it, and a
+        member with no `MemberContacts` row has an owner nobody can name or
+        write to.
+
+        `ensureOwnerTeamRow` / `ensureOwnerContact` rather than the raw
+        `createOwnerTeamRow` / `createContact` `provisionMember` uses,
+        because THIS path also runs for a re-applicant reusing an existing
+        `Members` row (`reapplicant.member` above) — one that may already
+        carry both rows from their earlier, rejected attempt. Creating
+        unconditionally would collide with `MemberUsers_one_owner_per_member`
+        or `MemberContacts_member_id_user_id_key`; these two helpers check
+        first and are no-ops when the row is already there, so calling them
+        on every registration (new or repeat) is safe.
+      */
+      await memberRepo.ensureOwnerTeamRow(tx, { member_id: member.id, user_id: user.id });
+
+      await memberRepo.ensureOwnerContact(tx, {
+        member_id: member.id,
+        user_id: user.id,
+        name: user.full_name,
+        email: user.email,
+        phone: user.phone,
+      });
+
       await memberRepo.setMemberCategories(tx, member.id, categoryIds);
 
       /*

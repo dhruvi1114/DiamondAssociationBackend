@@ -1,4 +1,4 @@
-import { InvoiceStatus, InvoiceType, Prisma } from '@prisma/client';
+import { InvoiceStatus, InvoiceType, OtpPurpose, Prisma } from '@prisma/client';
 import { logger } from '@logger/logger';
 import { nextRefundNumber } from '@modules/billing/numbering';
 import { PAYMENT_STATUS, REFUND_STATUS } from '@modules/billing/payment.constants';
@@ -7,9 +7,16 @@ import { ERROR_TYPES } from '@constant/errorTypes.constant';
 import { prisma } from '@db/prisma';
 import { writeAudit } from '@helpers/audit';
 import { allocateInvoiceNumber, generateDocumentNumber } from '@helpers/documentNumber';
-import { getNumericSetting, SETTING_KEYS } from '@helpers/settings';
+import { getBooleanSetting, getNumericSetting, SETTING_KEYS } from '@helpers/settings';
+import {
+  bookingsWhereForMember,
+  linkedGuestIdsForMember,
+  memberIdForVerifiedEmail,
+} from '@modules/event/booking.linking';
+import { consumeBookingOtp, issueBookingOtp } from '@modules/event/booking.otp';
 import { EVENT_STATUS } from '@modules/event/event.constants';
 import { bannerUrl } from '@modules/event/event.media';
+import { effectiveMembershipValidTill } from '@modules/event/event.pricing';
 import * as eventRepo from '@modules/event/event.repository';
 import { priceBooking } from '@modules/event/registration.pricing';
 import {
@@ -248,7 +255,7 @@ export const registerAsMember = async (
     on: now,
     seats: input.attendees.length,
     taxRate: event.tax_rate,
-    membershipValidTill: member.current_term?.valid_till ?? null,
+    membershipValidTill: effectiveMembershipValidTill(member.current_term),
     graceDays,
   });
 
@@ -745,6 +752,53 @@ export const listAttendees = async (query: {
  * The guest gets a login-free link to their booking, because they have no
  * account and still have to pay.
  */
+/**
+ * The email gate on a guest booking.
+ *
+ * Returns the instant the address was proven, or NULL when the feature is off.
+ * NULL is not a failure — it is the pre-existing behaviour, and it is what keeps
+ * `email_verified_at` empty so nothing written while the switch was off can ever
+ * be auto-attached to a member account.
+ *
+ * Called INSIDE the booking transaction so the code is consumed with the booking:
+ * a booking that rolls back for any later reason leaves the code live, and the
+ * applicant is not told to request a new one for a booking that never happened.
+ */
+export const verifyGuestEmail = async (
+  tx: Prisma.TransactionClient,
+  email: string,
+  code: string | undefined,
+): Promise<Date | null> => {
+  if (!(await getBooleanSetting(SETTING_KEYS.GUEST_BOOKING_OTP, false))) return null;
+
+  if (!code) {
+    throw new AppError({
+      errorType: ERROR_TYPES.VALIDATION_ERROR,
+      messageKey: 'auth.otpInvalid',
+      details: { fields: { otp_code: 'auth.otpInvalid' } },
+    });
+  }
+
+  await consumeBookingOtp(tx, email, OtpPurpose.GUEST_BOOKING_VERIFY, code);
+
+  return new Date();
+};
+
+/**
+ * Send a booking verification code.
+ *
+ * Answers the same way for every address, always. It says only that a code was
+ * sent to something the caller typed, which is a fact they already knew — there is
+ * nothing here to learn about who has booked before.
+ */
+export const requestBookingOtp = async (email: string): Promise<void> => {
+  if (!(await getBooleanSetting(SETTING_KEYS.GUEST_BOOKING_OTP, false))) return;
+
+  await prisma.$transaction(async (tx) => {
+    await issueBookingOtp(tx, email, OtpPurpose.GUEST_BOOKING_VERIFY);
+  });
+};
+
 export const registerAsGuest = async (
   slug: string,
   input: RegisterAsGuestInput,
@@ -783,11 +837,26 @@ export const registerAsGuest = async (
   const expiresAt = await holdDeadline(now);
 
   return prisma.$transaction(async (tx) => {
+    // Verified (or not required) before anything else — a failed verification
+    // must never hold a seat.
+    const emailVerifiedAt = await verifyGuestEmail(tx, input.email, input.otp_code);
+
     // All of them or none. A partial take would hold seats for a booking that
     // then rolls back, and the sweep has nothing to release them by.
     const taken = await seats.takeSeats(tx, event.id, seatCount);
 
     if (taken === null) throw conflict('event.soldOut');
+
+    /*
+      An address we have just proven, belonging to a member who chose not to sign in.
+
+      Attached now so the booking is not orphaned. The PRICE is untouched: they were
+      offered the member rate behind "Sign in for the member price" and did not take
+      it, and re-pricing after the fact would mean re-issuing an invoice (D-7). The
+      form is not told the address is known, either — that would turn it into a way
+      to discover which addresses have accounts.
+    */
+    const linkedMemberId = emailVerifiedAt ? await memberIdForVerifiedEmail(tx, input.email) : null;
 
     const guest = await tx.guestRegistrant.create({
       data: {
@@ -804,6 +873,8 @@ export const registerAsGuest = async (
         state: input.state ?? null,
         pincode: input.pincode ?? null,
         country: input.country,
+        email_verified_at: emailVerifiedAt,
+        linked_member_id: linkedMemberId,
       },
     });
 
@@ -982,7 +1053,13 @@ export const getBookingSummary = async (id: bigint) => {
       invoice: {
         /* `id` because the PDF routes are keyed by it — the number is what a
            person quotes, not what the download endpoint takes. */
-        select: { id: true, invoice_number: true, status: true, total_amount: true, due_date: true },
+        select: {
+          id: true,
+          invoice_number: true,
+          status: true,
+          total_amount: true,
+          due_date: true,
+        },
       },
     },
   });
@@ -1058,8 +1135,10 @@ export const exportAttendees = async (query: { eventId: bigint; statuses?: numbe
  * came to look at.
  */
 export const listMyBookings = async (memberId: bigint) => {
+  const linkedGuestIds = await linkedGuestIdsForMember(prisma, memberId);
+
   const bookings = await prisma.eventRegistration.findMany({
-    where: { member_id: memberId, deletedAt: null },
+    where: bookingsWhereForMember(memberId, linkedGuestIds),
     orderBy: { registered_at: 'desc' },
     include: {
       event: {
@@ -1112,6 +1191,10 @@ export const listMyBookings = async (memberId: bigint) => {
     total_amount: booking.total_amount.toFixed(2),
     expires_at: booking.expires_at,
     rejection_reason: booking.rejection_reason,
+    /* Booked before this company was a member. The row is still guest-owned — it is
+       shown here, never re-billed (D-7) — so the UI can say so rather than implying
+       the invoice was raised to the member. */
+    booked_as_guest: booking.member_id === null,
     invoice: booking.invoice
       ? {
           invoice_number: booking.invoice.invoice_number,

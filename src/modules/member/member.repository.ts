@@ -1,7 +1,9 @@
+import { SUBMISSION_STATUS } from '@modules/event/registration.constants';
 import { Prisma } from '@prisma/client';
 import type { MemberStatus } from '@prisma/client';
 import type { Db } from '@db/prisma';
-import { MEMBER_USER_STATUS } from '@modules/member/team.constants';
+import { invoicesWhereForMember } from '@modules/event/booking.linking';
+import { MEMBER_ROLE, MEMBER_USER_STATUS } from '@modules/member/team.constants';
 
 /**
  * Data access for the member record.
@@ -52,6 +54,86 @@ export const createOwnerTeamRow = (
   db: Db,
   data: { member_id: bigint; user_id: bigint; member_role: number; status: number },
 ) => db.memberUser.create({ data: { ...data, accepted_at: new Date() } });
+
+/**
+ * `createOwnerTeamRow`, made safe to call more than once.
+ *
+ * `provisionMember` (member.service.ts) always creates a brand-new `Members`
+ * row, so it can call `createOwnerTeamRow` unconditionally. Registration
+ * cannot: its re-application path (`register.service.ts`, `resolveReapplicant`)
+ * reuses an existing `Members` row for a returning applicant, and that row may
+ * already carry the owner's `MemberUsers` row from their earlier attempt.
+ * Creating a second one would collide with either the `(member_id, user_id)`
+ * unique index or `MemberUsers_one_owner_per_member` (at most one OWNER row per
+ * member). Checking first — rather than catching the violation — keeps the
+ * caller's transaction free of a throw it would otherwise have to swallow.
+ *
+ * Called from BOTH of registration's branches (fresh signup and
+ * re-application) so the same guard protects each: a fresh member never has a
+ * row yet and this simply creates one, while a re-applicant's existing row is
+ * left untouched.
+ */
+export const ensureOwnerTeamRow = async (
+  db: Db,
+  data: { member_id: bigint; user_id: bigint },
+): Promise<void> => {
+  const existing = await db.memberUser.findFirst({
+    where: { member_id: data.member_id, user_id: data.user_id },
+    select: { id: true },
+  });
+
+  if (existing) return;
+
+  await createOwnerTeamRow(db, {
+    member_id: data.member_id,
+    user_id: data.user_id,
+    member_role: MEMBER_ROLE.OWNER,
+    status: MEMBER_USER_STATUS.ACTIVE,
+  });
+};
+
+/**
+ * The owner as a `MemberContacts` row, made safe to call more than once.
+ *
+ * Mirrors `ensureOwnerTeamRow` for the same reason `provisionMember` writes a
+ * contact alongside its team row (see the comment there): a company with no
+ * contact for its owner is a person the association cannot name, write to, or
+ * let anyone correct. Registration never wrote this row going forward — the
+ * 2026-09-01 migration only backfilled the companies that already existed —
+ * so a fresh signup and a re-application both need it, and both need it
+ * skipped when the row is already there.
+ *
+ * Checked by `(member_id, user_id)`, which is exactly what
+ * `MemberContacts_member_id_user_id_key` (partial, `user_id IS NOT NULL`)
+ * enforces, so this can never race that index either.
+ */
+export const ensureOwnerContact = async (
+  db: Db,
+  data: { member_id: bigint; user_id: bigint; name: string; email: string; phone: string | null },
+): Promise<void> => {
+  const existing = await db.memberContact.findFirst({
+    where: { member_id: data.member_id, user_id: data.user_id, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (existing) return;
+
+  const hasPrimary = await db.memberContact.findFirst({
+    where: { member_id: data.member_id, is_primary: true, deletedAt: null },
+    select: { id: true },
+  });
+
+  await createContact(db, {
+    member_id: data.member_id,
+    user_id: data.user_id,
+    name: data.name,
+    email: data.email,
+    phone: data.phone,
+    // Primary only when nobody else already holds the flag — the partial
+    // unique index allows exactly one.
+    is_primary: !hasPrimary,
+  });
+};
 
 export const updateMember = (db: Db, id: bigint, data: Prisma.MemberUpdateInput) =>
   db.member.update({ where: { id }, data });
@@ -536,8 +618,7 @@ export const listOwnInvoices = async (
   },
 ) => {
   const where: Prisma.InvoiceWhereInput = {
-    member_id: memberId,
-    deletedAt: null,
+    ...invoicesWhereForMember(memberId),
     ...(params.search ? { invoice_number: { contains: params.search, mode: 'insensitive' } } : {}),
     ...(params.status?.length ? { status: { in: params.status as never } } : {}),
     ...(params.type?.length ? { invoice_type: { in: params.type as never } } : {}),
@@ -579,6 +660,21 @@ export const listOwnInvoices = async (
           take: 1,
           select: { description: true },
         },
+        /*
+          Any claim still waiting on a person.
+
+          There is no invoice status between "owed" and "paid", and there should
+          not be: the invoice has not changed, somebody has merely SAID they paid
+          it. The waiting state lives on the claim, so the screen reads it from
+          here rather than from a seventh InvoiceStatus that every filter and
+          report would have to learn.
+        */
+        paymentSubmissions: {
+          where: { status: SUBMISSION_STATUS.PENDING },
+          orderBy: { id: 'desc' },
+          take: 1,
+          select: { id: true, reference_no: true, createdAt: true },
+        },
       },
     }),
     db.invoice.count({ where }),
@@ -587,14 +683,21 @@ export const listOwnInvoices = async (
   return { rows, total };
 };
 
-/** The years this member has invoices in, newest first — the year filter's options. */
+/**
+ * The years this member has invoices in, newest first — the year filter's options.
+ *
+ * Widened to match `invoicesWhereForMember` exactly: the LEFT JOIN reaches the same
+ * guest-linked invoices `listOwnInvoices` now includes, so the year filter never
+ * offers (or omits) a year the table itself disagrees with.
+ */
 export const ownInvoiceYears = async (db: Db, memberId: bigint): Promise<string[]> => {
   const rows = await db.$queryRaw<{ year: string }[]>`
-    SELECT DISTINCT to_char("issue_date", 'YYYY') AS year
-      FROM "Invoices"
-     WHERE "member_id" = ${memberId}
-       AND "deletedAt" IS NULL
-       AND "issue_date" IS NOT NULL
+    SELECT DISTINCT to_char(i."issue_date", 'YYYY') AS year
+      FROM "Invoices" i
+      LEFT JOIN "GuestRegistrants" g ON g."id" = i."guest_registrant_id"
+     WHERE (i."member_id" = ${memberId} OR g."linked_member_id" = ${memberId})
+       AND i."deletedAt" IS NULL
+       AND i."issue_date" IS NOT NULL
      ORDER BY year DESC
   `;
 

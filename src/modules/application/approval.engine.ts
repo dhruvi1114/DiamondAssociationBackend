@@ -92,34 +92,73 @@ export const assertReviewerMay = (from: ApplicationStatus, to: ApplicationStatus
 };
 
 /**
+ * The stage list in flow order.
+ *
+ * `sequence` is the workflow's own numbering and it is never renumbered when a
+ * stage is switched off (stage-toggle spec, D-3), so the list an approval walks
+ * is the sorted list with the inactive rows filtered out — gaps and all. Sorting
+ * and filtering live here rather than in the query so one place decides what
+ * "next" means (§5.4).
+ */
+const activeInOrder = (stages: ApprovalStage[]): ApprovalStage[] =>
+  [...stages].filter((stage) => stage.is_active).sort((a, b) => a.sequence - b.sequence);
+
+const stageNotInWorkflow = (): AppError =>
+  new AppError({
+    errorType: ERROR_TYPES.CONFLICT,
+    messageKey: 'application.stageNotInWorkflow',
+  });
+
+/**
  * What an APPROVE at this stage means.
  *
  * The last stage approves the application; any earlier stage advances it. This
  * is the only place that decision is made, so "final" cannot mean one thing in
  * the service and another on screen.
+ *
+ * "Earlier stage" means the next ACTIVE one (D-4). The current stage is looked
+ * up among ALL stages, active or not, because an application can be parked on a
+ * stage that was switched off after it arrived there — APP2026030024 sits on
+ * Committee review today — and such an application must move forward rather than
+ * become undecidable. The conflict below is therefore narrower than it looks: it
+ * fires only when the stage is genuinely gone from the workflow, which is a
+ * misconfiguration, not a switched-off stage, which is a decision.
  */
 export const resolveApproval = (
   stages: ApprovalStage[],
   currentStageId: bigint,
 ): { isFinal: true; nextStage: null } | { isFinal: false; nextStage: ApprovalStage } => {
   const ordered = [...stages].sort((a, b) => a.sequence - b.sequence);
-  const index = ordered.findIndex((stage) => stage.id === currentStageId);
+  const current = ordered.find((stage) => stage.id === currentStageId);
 
-  if (index === -1) {
+  if (!current) {
     // The workflow changed under a live application. Better a loud conflict than
     // silently pushing it into a stage nobody configured.
-    throw new AppError({
-      errorType: ERROR_TYPES.CONFLICT,
-      messageKey: 'application.stageNotInWorkflow',
-    });
+    throw stageNotInWorkflow();
   }
 
-  const current = ordered[index]!;
-  const next = ordered[index + 1];
+  // Strictly after the current stage by sequence, so a parked inactive stage
+  // hands the application to whatever is still switched on beyond it.
+  const next = activeInOrder(stages).find((stage) => stage.sequence > current.sequence);
 
   if (current.is_final || !next) return { isFinal: true, nextStage: null };
 
   return { isFinal: false, nextStage: next };
+};
+
+/**
+ * May an application be routed to this stage by hand?
+ *
+ * Reassign is the one action that names a stage instead of deriving it, so it is
+ * the one action that can park an application somewhere nobody is looking
+ * (D-9). The admin screen already leaves inactive stages out of its dropdown;
+ * this is the rule behind it, because a screen cannot stop a direct POST.
+ *
+ * A stage that is absent and a stage that is switched off get the same conflict:
+ * from the caller's side both mean "not somewhere you may send this".
+ */
+export const assertStageSelectable = (stages: ApprovalStage[], stageId: bigint): void => {
+  if (!activeInOrder(stages).some((stage) => stage.id === stageId)) throw stageNotInWorkflow();
 };
 
 /** The two things a Reject can resolve to. */
@@ -238,9 +277,16 @@ export const notYourQueue = (stageName: string, roleCode: string): AppError =>
  * Back to the first stage, deliberately. A correction the applicant made at the
  * request of stage 3 may invalidate what stage 1 checked, and re-reading a
  * corrected form is cheaper than discovering later that nobody did.
+ *
+ * "First stage" is the first ACTIVE one (D-5), which is also where a brand-new
+ * application starts and where a reopened one re-enters — all three paths call
+ * this function, so that reading of "first" is settled once. A workflow with no
+ * active stage is the same conflict as a workflow with no stages at all (D-11):
+ * either way there is nobody to send this to, and inventing a queue is worse
+ * than saying so.
  */
 export const stageForResubmission = (stages: ApprovalStage[]): ApprovalStage => {
-  const first = [...stages].sort((a, b) => a.sequence - b.sequence)[0];
+  const first = activeInOrder(stages)[0];
   if (!first) {
     throw new AppError({
       errorType: ERROR_TYPES.CONFLICT,

@@ -1,4 +1,5 @@
 import { SettingValueType } from '@prisma/client';
+import { createReadStream } from 'fs';
 import path from 'path';
 import type { Readable } from 'stream';
 
@@ -241,10 +242,42 @@ export const clearBranding = async (slot: BrandingSlot, actor: Actor) => {
  * SystemSettings, and nothing the caller sends ever reaches the storage
  * adapter. Two images are reachable, whatever the request says.
  */
+/**
+ * The ILGDA lockup shipped with the API, served when the association has not
+ * uploaded a logo of its own.
+ *
+ * The same file `member.service.ts` already falls back to when it draws a
+ * membership card, and the same one the admin sidebar shows. It exists here
+ * because an inbox cannot fall back: a browser that gets a 404 for a logo can
+ * render a text mark instead, and an email client renders a broken image icon
+ * in somebody's inbox and nothing else. One URL that always answers is what an
+ * email needs.
+ *
+ * `logo` only. A missing `signature` must stay a 404 — an invoice with a
+ * stand-in signature on it would be claiming something untrue.
+ */
+const BUNDLED_LOGO = {
+  path: path.join(__dirname, '../../assets/brand/logo.png'),
+  mime: 'image/png',
+};
+
 export const readBranding = async (slot: BrandingSlot): Promise<BrandingFile> => {
   const storageKey = (await getSetting(BRANDING_SLOTS[slot]))?.trim();
 
   if (!storageKey) {
+    if (slot === 'logo') {
+      return {
+        stream: createReadStream(BUNDLED_LOGO.path),
+        mime: BUNDLED_LOGO.mime,
+        /*
+          A fixed key, so the ETag is stable while nobody has uploaded anything
+          and every request after the first is a 304. Uploading a real logo
+          changes the key and every cached copy revalidates to the new bytes.
+        */
+        key: 'bundled-logo.png',
+      };
+    }
+
     throw new AppError({ errorType: ERROR_TYPES.NOT_FOUND, messageKey: 'settings.brandingNotSet' });
   }
 

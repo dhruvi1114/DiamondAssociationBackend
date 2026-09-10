@@ -506,10 +506,16 @@ const decide = async (
     } else {
       // Reassign moves the queue without deciding anything.
       if (!input.stageId) throw conflict('application.stageRequired');
-      const target = stages.find((candidate) => candidate.id === input.stageId);
-      if (!target) throw conflict('application.stageNotInWorkflow');
+      /*
+       * The target must be a stage that is switched ON (stage-toggle spec, D-9).
+       * Reassign is the only action that takes a stage id from the request
+       * rather than deriving it, so it is the only way an application could be
+       * parked in a queue nobody is watching. The dialog already hides inactive
+       * stages; this is the rule underneath, for the POST that skips the dialog.
+       */
+      engine.assertStageSelectable(stages, input.stageId);
       nextStatus = ApplicationStatus.UNDER_REVIEW;
-      nextStageId = target.id;
+      nextStageId = input.stageId;
       actionType = engine.ACTION_FOR.reassign;
     }
 

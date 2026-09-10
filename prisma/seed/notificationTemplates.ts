@@ -542,6 +542,105 @@ const TEMPLATES: TemplateSeed[] = [
       'If you did not ask to reset your password, no action is needed — your current password still works.',
     ].join('\n'),
   },
+  /* --- guest event booking: emailed codes --------------------------------
+     Short, and they say what the code is for. A code with no context is the
+     message people report as phishing. */
+  {
+    code: 'event.booking_otp',
+    channel: NotificationChannel.EMAIL,
+    locale: 'en',
+    subject: 'Your booking verification code',
+    body: [
+      'Hello,',
+      '',
+      'Your code to confirm this email address for an event booking is:',
+      '',
+      '{{otp}}',
+      '',
+      'It expires in {{expiry_minutes}} minutes.',
+      '',
+      'If you did not start a booking, no action is needed — nothing has been',
+      'booked and no invoice has been raised.',
+    ].join('\n'),
+  },
+  {
+    code: 'event.booking_lookup_otp',
+    channel: NotificationChannel.EMAIL,
+    locale: 'en',
+    subject: 'Your code to view your bookings',
+    body: [
+      'Hello,',
+      '',
+      'Your code to view the bookings and invoices for this email address is:',
+      '',
+      '{{otp}}',
+      '',
+      'It expires in {{expiry_minutes}} minutes.',
+      '',
+      'If you did not ask for this, no action is needed — nobody can see anything',
+      'without the code above.',
+    ].join('\n'),
+  },
+  /*
+    Membership money, once it stopped being settled on one click.
+
+    The member is NOT active while a claim is checked, which is the right rule
+    and also the one that feels like nothing happened. These three are what make
+    the wait legible.
+  */
+  {
+    code: 'membership.payment_received',
+    channel: NotificationChannel.EMAIL,
+    locale: 'en',
+    subject: 'We have your payment details for invoice {{invoice_number}}',
+    body: [
+      'Hello {{name}},',
+      '',
+      'Thank you — we have your payment details for invoice {{invoice_number}}',
+      'for {{amount}} (reference {{reference_no}}).',
+      '',
+      'We are checking the payment against our account and will confirm as soon',
+      'as that is done, usually within one working day. Your membership becomes',
+      'active at that point.',
+      '',
+      'No action is needed from you right now.',
+    ].join('\n'),
+  },
+  {
+    code: 'membership.payment_verified',
+    channel: NotificationChannel.EMAIL,
+    locale: 'en',
+    subject: 'Your membership is active',
+    body: [
+      'Hello {{name}},',
+      '',
+      'We have confirmed your payment of {{amount}} against invoice',
+      '{{invoice_number}}. Your membership is now active.',
+      '',
+      'Your company is listed in the member directory, and member pricing',
+      'applies to events from today.',
+      '',
+      'Your receipt is on the Billing page of your account.',
+    ].join('\n'),
+  },
+  {
+    code: 'membership.payment_rejected',
+    channel: NotificationChannel.EMAIL,
+    locale: 'en',
+    subject: 'We could not trace your payment for invoice {{invoice_number}}',
+    body: [
+      'Hello {{name}},',
+      '',
+      'We could not match the payment details you sent for invoice',
+      '{{invoice_number}} against our account.',
+      '',
+      'Reason given: {{reason}}',
+      '',
+      'Nothing has been lost. The invoice is still open, and you can send the',
+      'details again from the Billing page once you have the right reference —',
+      'or reply to this email and we will look into it with you.',
+    ].join('\n'),
+  },
 ];
 
 export const seedNotificationTemplates = async (prisma: PrismaClient): Promise<number> => {

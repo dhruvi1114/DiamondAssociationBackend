@@ -86,19 +86,34 @@ export const listRegistrationsSchema = z.object({
 
 export type ListRegistrationsQuery = z.infer<typeof listRegistrationsSchema>;
 
-/** Body of `POST /events/registrations/:id/payment` — "I have paid". */
+/**
+ * Body of `POST /events/registrations/:id/payment` — "I have paid".
+ *
+ * Every field is coerced because this arrives as `multipart/form-data` now: the
+ * claim carries a receipt file, and every text field beside a file reaches the
+ * server as a string. `method` used to be a union of number literals, which
+ * rejected the string `"0"` a form part sends.
+ *
+ * `proof_path` is deliberately NOT here. It used to be, as a free string the
+ * server stored verbatim — so a payer could name any path in storage and have
+ * it recorded as their receipt. The path is now produced by the server from the
+ * bytes it received, and the client has no say in it.
+ */
 export const submitPaymentSchema = z.object({
   // Cash is not claimable: money handed over the counter is recorded by the
   // person who took it, not asserted by the payer.
-  method: z.union([
-    z.literal(SUBMISSION_METHOD.NEFT),
-    z.literal(SUBMISSION_METHOD.UPI),
-    z.literal(SUBMISSION_METHOD.CHEQUE),
-  ]),
+  method: z.coerce
+    .number()
+    .refine(
+      (value) =>
+        value === SUBMISSION_METHOD.NEFT ||
+        value === SUBMISSION_METHOD.UPI ||
+        value === SUBMISSION_METHOD.CHEQUE,
+      { message: 'validation.invalidPaymentMethod' },
+    ),
   reference_no: z.string().trim().min(3).max(100),
   amount: z.coerce.number().positive(),
   paid_on: z.coerce.date(),
-  proof_path: z.string().trim().max(500).optional(),
 });
 
 export type SubmitPaymentInput = z.infer<typeof submitPaymentSchema>;
@@ -129,6 +144,20 @@ export const registerAsGuestSchema = z.object({
   company_name: z.string().trim().max(200).optional(),
   email: z.string().trim().toLowerCase().email().max(200),
   phone: z.string().trim().min(6).max(20),
+  /*
+    OPTIONAL here on purpose, and required in the service only when
+    `events.guest_booking_otp` is on.
+
+    A required field would reject every booking from a frontend that has not
+    shipped the verify step yet, which would turn a backend deploy into an outage
+    on a public form. The service is where the flag lives, so the service is where
+    required-ness belongs.
+  */
+  otp_code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/)
+    .optional(),
   /*
     The billing block, all of it required for a guest.
 
@@ -182,3 +211,28 @@ export const registerAsGuestSchema = z.object({
 });
 
 export type RegisterAsGuestInput = z.infer<typeof registerAsGuestSchema>;
+
+/** Body of `POST /public/events/booking/request-otp`. */
+export const requestBookingOtpSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(200),
+});
+
+export type RequestBookingOtpInput = z.infer<typeof requestBookingOtpSchema>;
+
+/** Body of `POST /public/events/bookings/lookup/request-otp`. */
+export const requestLookupOtpSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(200),
+});
+
+export type RequestLookupOtpInput = z.infer<typeof requestLookupOtpSchema>;
+
+/** Body of `POST /public/events/bookings/lookup`. */
+export const bookingLookupSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(200),
+  otp_code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/),
+});
+
+export type BookingLookupInput = z.infer<typeof bookingLookupSchema>;

@@ -122,6 +122,17 @@ export const SETTING_KEYS = {
    * choice, which is theirs and is restored when this is switched back on.
    */
   DIRECTORY_ENABLED: 'directory.enabled',
+  /**
+   * Require an OTP on the guest event booking company email.
+   *
+   * OFF (default) is exactly the behaviour that shipped before this existed: no
+   * code is requested, none is required, and `email_verified_at` is never
+   * written. It is a switch rather than a deploy so a problem with code delivery
+   * is undone from the Settings screen in one click.
+   */
+  GUEST_BOOKING_OTP: 'events.guest_booking_otp',
+  /** Serve `/my-bookings` and its two lookup endpoints. OFF (default) 404s them. */
+  BOOKING_LOOKUP_ENABLED: 'events.booking_lookup_enabled',
 } as const;
 
 /** The two values `billing.renewal_basis` may hold. */

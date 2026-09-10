@@ -1,8 +1,9 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { InvoiceStatus, MemberStatus, Prisma, TermStatus } from '@prisma/client';
+import { InvoiceStatus, MemberStatus, Prisma } from '@prisma/client';
 import { AUDIT_ACTIONS } from '@constant/audit.constant';
 import { ERROR_TYPES } from '@constant/errorTypes.constant';
+import { activateMembershipForInvoice } from '@modules/billing/membershipActivation';
 import { prisma } from '@db/prisma';
 import { writeAudit } from '@helpers/audit';
 import { renderInvoicePdf } from '@helpers/pdf/invoiceTemplate';
@@ -724,28 +725,15 @@ const applyInvoicePayment = async (
       },
     });
 
-    // Every term this invoice was raised for goes live together — a member
-    // does not hold a mix of active and still-pending terms off one payment.
-    await tx.membershipTerm.updateMany({
-      where: { invoice_id: invoiceId, status: TermStatus.PENDING_PAYMENT },
-      data: { status: TermStatus.ACTIVE },
-    });
-
-    let updatedMember = member;
-    if (member.status === MemberStatus.PENDING) {
-      updatedMember = await repo.updateMember(tx, memberId, {
-        status: MemberStatus.ACTIVE,
-        ...(member.joined_on ? {} : { joined_on: new Date() }),
-      });
-
-      await repo.recordStatusChange(tx, {
-        member_id: memberId,
-        from_status: member.status,
-        to_status: MemberStatus.ACTIVE,
-        reason: `Invoice ${invoice.invoice_number} paid`,
-        changed_by_admin_id: attribution.changedByAdminId,
-      });
-    }
+    /* Shared with the claim-verification path, so both ways of settling a
+       membership invoice switch the membership on identically. */
+    const updatedMember =
+      (await activateMembershipForInvoice(tx, {
+        invoiceId,
+        memberId,
+        invoiceNumber: invoice.invoice_number,
+        changedByAdminId: attribution.changedByAdminId,
+      })) ?? member;
 
     // Invoice → payment → receipt, in that order and in one transaction. The
     // payment is the record of money received; the receipt is the document that
@@ -802,12 +790,13 @@ export const recordInvoicePayment = (memberId: bigint, invoiceId: bigint, actor:
     audit: adminAudit(actor),
   });
 
-/** Self-service: a member paying their own invoice from the portal. */
-export const payOwnInvoice = (memberId: bigint, invoiceId: bigint, actor: Actor) =>
-  applyInvoicePayment(memberId, invoiceId, {
-    changedByAdminId: null,
-    audit: memberAudit(actor),
-  });
+/*
+  `payOwnInvoice` stood here — one click, invoice PAID, membership ACTIVE, no
+  reference and nobody checking. It is gone: a member now files a claim with the
+  bank reference and a receipt (`billing/paymentClaim.service.ts`), and an admin
+  settles it in the payments queue. `applyInvoicePayment` stays for
+  `recordInvoicePayment`, which is staff recording money they have already seen.
+*/
 
 const orgInfo = async () => {
   const rows = await listSettings();
@@ -955,7 +944,7 @@ const billedParty = (invoice: {
  */
 export const getInvoicePdf = async (
   invoiceId: bigint,
-  viewer: { memberId: bigint | null; isAdmin: boolean },
+  viewer: { memberId: bigint | null; isAdmin: boolean; guestEmail?: string | null },
 ) => {
   const invoice = await prisma.invoice.findFirst({
     where: { id: invoiceId, deletedAt: null },
@@ -968,7 +957,15 @@ export const getInvoicePdf = async (
   if (!invoice) throw notFound('member.invoiceNotFound');
 
   const isOwner = viewer.memberId !== null && viewer.memberId === invoice.member_id;
-  if (!isOwner && !viewer.isAdmin) throw notFound('member.invoiceNotFound');
+  /*
+    A guest proved this address by OTP minutes ago (D-3, D-6). They own this invoice
+    in every sense that matters: it names them, and it is the only copy they have.
+    Matched against the invoice's OWN guest row rather than an id from the path, so a
+    valid lookup token cannot be pointed at somebody else's invoice.
+  */
+  const isGuestOwner = !!viewer.guestEmail && invoice.guest_registrant?.email === viewer.guestEmail;
+
+  if (!isOwner && !isGuestOwner && !viewer.isAdmin) throw notFound('member.invoiceNotFound');
 
   if (invoice.pdf_path && (await storage.current.exists(invoice.pdf_path))) {
     return {
@@ -1123,12 +1120,25 @@ export const listOwnInvoices = async (memberId: bigint, query: ListOwnInvoicesQu
          instead of a blank where a name should be. */
       subject: row.items[0]?.description ?? null,
       status: row.status,
+      /*
+        A claim waiting on somebody, if there is one. The invoice status still
+        reads ISSUED or OVERDUE — nothing has been confirmed — so this is what
+        lets the screen say "we have your payment and are checking it" instead
+        of leaving the member looking at a bill they have already settled.
+      */
+      pending_claim: row.paymentSubmissions[0]
+        ? {
+            reference_no: row.paymentSubmissions[0].reference_no,
+            submitted_at: row.paymentSubmissions[0].createdAt,
+          }
+        : null,
       issue_date: row.issue_date,
       due_date: row.due_date,
       total_amount: row.total_amount.toFixed(2),
       amount_paid: row.amount_paid.toFixed(2),
       balance_due: row.balance_due.toFixed(2),
       currency: row.currency,
+      booked_as_guest: row.member_id === null,
     })),
     total,
     /* Sent with the page so the year filter offers only years that exist. An

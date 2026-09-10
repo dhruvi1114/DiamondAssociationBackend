@@ -17,20 +17,44 @@ interface StageSeed {
   roleCode: string;
   isFinal?: boolean;
   slaHours?: number;
+  /**
+   * Whether the stage takes part in the flow. Absent means active — a stage is
+   * only ever switched off deliberately, and the column defaults the same way.
+   */
+  isActive?: boolean;
 }
 
+/*
+ * One active stage: Final approval (approval-stage-toggle spec, D-2).
+ *
+ * The other two are switched off, not removed. Committee review is a rubber
+ * stamp — no committee meets — and Document verification splits work across a
+ * maker and a checker who are currently the same super admin, which records a
+ * control in the audit log that does not exist in the building.
+ *
+ * Off does NOT mean optional. The document gate runs on every approve in
+ * `application.service.ts`, not at a named stage, so an application with an
+ * unverified required document is still refused with Document verification
+ * switched off (D-6). That is what makes switching it off safe.
+ *
+ * To bring maker-checker back: set `isActive: true` here and re-run the seed.
+ * Sequences never moved, so the stage returns to its own position, all of its
+ * decision history is still attached, and no migration is involved (§8).
+ */
 const MEMBERSHIP_STAGES: StageSeed[] = [
   {
     sequence: 1,
     name: 'Document verification',
     roleCode: 'ADMIN',
     slaHours: 48,
+    isActive: false,
   },
   {
     sequence: 2,
     name: 'Committee review',
     roleCode: 'APPROVER',
     slaHours: 120,
+    isActive: false,
   },
   {
     sequence: 3,
@@ -76,12 +100,18 @@ const seedWorkflow = async (
         approver_role_id: role.id,
         is_final: stage.isFinal ?? false,
         sla_hours: stage.slaHours ?? null,
+        is_active: stage.isActive ?? true,
       },
+      // `is_active` is written on BOTH branches so a re-run re-asserts the
+      // configuration above. Leaving it off `update` would let a stage switched
+      // on by hand in the database survive every later seed, and the file would
+      // stop describing the workflow that is actually running.
       update: {
         name: stage.name,
         approver_role_id: role.id,
         is_final: stage.isFinal ?? false,
         sla_hours: stage.slaHours ?? null,
+        is_active: stage.isActive ?? true,
       },
     });
   }

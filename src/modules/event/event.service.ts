@@ -7,7 +7,11 @@ import { prisma } from '@db/prisma';
 import { writeAudit } from '@helpers/audit';
 import { EVENT_STATUS } from '@modules/event/event.constants';
 import { getNumericSetting, SETTING_KEYS } from '@helpers/settings';
-import { audienceFor, resolveTier } from '@modules/event/event.pricing';
+import {
+  audienceFor,
+  effectiveMembershipValidTill,
+  resolveTier,
+} from '@modules/event/event.pricing';
 import { DEFAULT_GRACE_DAYS, SEAT_HOLDING_STATUSES } from '@modules/event/registration.constants';
 import * as repo from '@modules/event/event.repository';
 import { cancelEventWithRefunds } from '@modules/event/registration.service';
@@ -468,13 +472,60 @@ interface BrowseQuery extends repo.BrowseFilters {
   limit: number;
 }
 
+/**
+ * Whether a signed-in user is entitled to member benefits right now — member
+ * pricing, member-only events, the directory, and so on.
+ *
+ * An approved member who has not yet paid their membership invoice IS a
+ * member (they can log in, see their profile, and pay), but gets none of
+ * those benefits until the invoice clears. This asks that question the same
+ * way the booking-price path (`registration.service.ts`) and the event-detail
+ * path (`getMemberEvent` above) already do: resolve the member's current
+ * term, then hand it to `effectiveMembershipValidTill` and `audienceFor` —
+ * the two functions that hold this rule. Nothing here re-derives the answer
+ * from `member.status` or `term.status` directly; a hand-written second
+ * status check is exactly how a member-only event or the wrong list price
+ * leaked through before.
+ *
+ * `undefined` (no session) is NON_MEMBER, same as a member with no active
+ * term — both see the guest-facing view.
+ */
+export const resolveMemberBenefits = async (
+  userId: bigint | undefined,
+  now = new Date(),
+): Promise<boolean> => {
+  if (userId === undefined) return false;
+
+  const member = await prisma.member.findFirst({
+    where: { team_users: { some: { user_id: userId, status: 1 } }, deletedAt: null },
+    select: { current_term: { select: { status: true, valid_till: true } } },
+  });
+
+  const graceDays = await getNumericSetting(SETTING_KEYS.MEMBERSHIP_GRACE_DAYS, DEFAULT_GRACE_DAYS);
+
+  const audience = audienceFor({
+    membershipValidTill: effectiveMembershipValidTill(member?.current_term),
+    graceDays,
+    on: now,
+  });
+
+  return audience === 'MEMBER';
+};
+
 /** Published public events, for a visitor with no session. */
 export const listPublicEvents = async ({ page, limit, ...filters }: BrowseQuery) =>
   paged(await repo.listPublicEvents(page, limit, filters));
 
-/** Published events of both kinds, for a signed-in member. */
-export const listMemberEvents = async ({ page, limit, ...filters }: BrowseQuery) =>
-  paged(await repo.listMemberEvents(page, limit, filters));
+/**
+ * Published events of both kinds, for a signed-in member — but ONLY when that
+ * member currently has member benefits. An approved member who has not paid
+ * sees exactly the public set, same as a guest: `publicOnly` is driven by
+ * `resolveMemberBenefits`, never by "a token was presented."
+ */
+export const listMemberEvents = async (
+  { page, limit, ...filters }: BrowseQuery,
+  publicOnly: boolean,
+) => paged(await repo.listMemberEvents(page, limit, filters, publicOnly));
 
 /** The filter rail's options, counted against what this audience can see. */
 export const browseFacets = (publicOnly: boolean) => repo.browseFacets(publicOnly);
@@ -645,7 +696,7 @@ export const getMemberEvent = async (slug: string, userId?: bigint, now = new Da
 
   const member = await prisma.member.findFirst({
     where: { team_users: { some: { user_id: userId, status: 1 } }, deletedAt: null },
-    select: { id: true, current_term: { select: { valid_till: true } } },
+    select: { id: true, current_term: { select: { status: true, valid_till: true } } },
   });
 
   /* Looked up before the pricing branch below: a booking exists whether or not
@@ -660,7 +711,7 @@ export const getMemberEvent = async (slug: string, userId?: bigint, now = new Da
   const graceDays = await getNumericSetting(SETTING_KEYS.MEMBERSHIP_GRACE_DAYS, DEFAULT_GRACE_DAYS);
 
   const audience = audienceFor({
-    membershipValidTill: member?.current_term?.valid_till ?? null,
+    membershipValidTill: effectiveMembershipValidTill(member?.current_term),
     graceDays,
     on: now,
   });

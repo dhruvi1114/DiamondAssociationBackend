@@ -316,6 +316,13 @@ enum OtpPurpose {
   SIGNUP_VERIFY
   PASSWORD_RESET
   LOGIN_2FA
+  /// Proves a guest owns the company email they typed on the event booking form.
+  /// A separate purpose because the enum's own rule is that purpose is part of the
+  /// lookup key — a signup code must not be replayable as a booking verification.
+  GUEST_BOOKING_VERIFY
+  /// Proves inbox ownership at `/my-bookings` read time. Distinct from
+  /// GUEST_BOOKING_VERIFY so a code mailed for one cannot be used for the other.
+  BOOKING_LOOKUP
 }
 
 /// One refresh session, for either audience. The access token is a short-lived JWT that is never
