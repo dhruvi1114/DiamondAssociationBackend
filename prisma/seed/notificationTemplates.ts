@@ -641,6 +641,57 @@ const TEMPLATES: TemplateSeed[] = [
       'or reply to this email and we will look into it with you.',
     ].join('\n'),
   },
+  /* --- M6: renewal ---------------------------------------------------------
+     One template for all four reminder stages: the stage sentence arrives as {{headline}},
+     so the four messages cannot drift apart in anything but the sentence that differs. */
+  {
+    code: 'membership.renewal_reminder',
+    channel: NotificationChannel.EMAIL,
+    locale: 'en',
+    subject: '{{headline}}',
+    body: [
+      'Hello {{name}},',
+      '',
+      '{{headline}}',
+      '',
+      'Plan: {{plan_name}}',
+      'Invoice: {{invoice_number}} for {{amount}}, due {{due_on}}',
+      'Your current membership ends on {{expires_on}}.',
+      '',
+      'Pay from the Billing page of your account. Renewing on time keeps your',
+      'directory listing and member event pricing without a break.',
+    ].join('\n'),
+  },
+  {
+    code: 'membership.renewal_reminder',
+    channel: NotificationChannel.IN_APP,
+    locale: 'en',
+    subject: '{{headline}}',
+    body: 'Invoice {{invoice_number}} for {{amount}} is due {{due_on}}. Your membership ends on {{expires_on}}.',
+  },
+  {
+    code: 'membership.expired',
+    channel: NotificationChannel.EMAIL,
+    locale: 'en',
+    subject: 'Your membership has expired',
+    body: [
+      'Hello {{name}},',
+      '',
+      'Your membership ended on {{expired_on}} and the grace period has now passed.',
+      'Your company is no longer listed in the member directory, and events are',
+      'charged at the non-member price.',
+      '',
+      'You can still sign in. Pay your renewal invoice from the Billing page and',
+      'both come back straight away.',
+    ].join('\n'),
+  },
+  {
+    code: 'membership.expired',
+    channel: NotificationChannel.IN_APP,
+    locale: 'en',
+    subject: 'Your membership has expired',
+    body: 'Pay your renewal invoice to return to the directory and member event pricing.',
+  },
 ];
 
 export const seedNotificationTemplates = async (prisma: PrismaClient): Promise<number> => {

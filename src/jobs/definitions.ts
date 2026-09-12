@@ -2,6 +2,7 @@ import { JobRunStatus, NotificationStatus, Prisma } from '@prisma/client';
 import { prisma } from '@db/prisma';
 import { logger } from '@logger/logger';
 import { releaseExpiredHolds, sendDueReminders } from '@modules/event/expiry.service';
+import { runRenewalCycle } from '@modules/renewal/renewal.lifecycle';
 import { drainNotifications } from '@notifications/drain';
 import type { JobDefinition } from '@jobs/runner';
 
@@ -161,12 +162,34 @@ export const reportPruneJob: JobDefinition = {
   },
 };
 
+/**
+ * Membership renewal (M6).
+ *
+ * Hourly, not nightly: every step is idempotent (DB-enforced), and an hourly pass means a new
+ * calendar day is picked up within the hour whatever timezone the server runs in — node-cron
+ * here is pinned to UTC while term dates are local calendar days.
+ */
+export const renewalJob: JobDefinition = {
+  name: 'membership.renewal',
+  schedule: '20 * * * *',
+  description:
+    'Starts paid renewal terms, closes ended terms, expires members past grace, raises renewal invoices and sends reminders.',
+  handler: async () => {
+    const s = await runRenewalCycle();
+    if (s.raised + s.expired + s.started + s.reminded > 0 || s.skipped.length > 0) {
+      logger.info('membership.renewal', { ...s, skipped: s.skipped.length });
+    }
+    return s.closed + s.started + s.expired + s.raised + s.reminded;
+  },
+};
+
 export const jobDefinitions: JobDefinition[] = [
   notificationDrainJob,
   tokenPruneJob,
   retentionPruneJob,
   eventHoldSweepJob,
   reportPruneJob,
+  renewalJob,
 ];
 
 /**

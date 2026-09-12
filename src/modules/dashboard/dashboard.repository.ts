@@ -34,11 +34,32 @@ export const openApplications = async (db: Db): Promise<number> => {
 };
 
 /**
- * Uploaded documents nobody has checked yet, across both surfaces.
+ * Applications sent back to the MEMBER to fix.
  *
- * Application documents and member documents are separate tables — a document
- * attached to an application in flight, and one held against a live member —
- * and both queue for the same person, so one number covers both.
+ * The mirror image of `openApplications` above: that one is "waiting for
+ * staff", this is "waiting for the applicant". Deliberately its own tile
+ * rather than folded into the open-applications count — a work queue that
+ * cannot go to zero while staff have done everything asked of them is not
+ * answering "what is waiting for me" any more.
+ */
+export const actionNeededApplications = async (db: Db): Promise<number> => {
+  const rows = await db.$queryRaw<{ n: bigint }[]>(Prisma.sql`
+    SELECT count(*) AS n
+      FROM "MembershipApplications"
+     WHERE "deletedAt" IS NULL
+       AND "status"::text = 'RETURNED_FOR_CORRECTION'
+  `);
+
+  return Number(rows[0]?.n ?? 0);
+};
+
+/**
+ * Application documents nobody has checked yet.
+ *
+ * Application documents only — the KYC tile opens Member Requests, and a count
+ * that includes rows its page cannot show sends the reader looking for work
+ * that is not there. Member documents (replaced from a Profile) have their own
+ * count below, `pendingMemberDocuments`, and their own tile.
  *
  * **Documents on a returned application are excluded**, and that has to match
  * the applications tile above it. RETURNED_FOR_CORRECTION means the application
@@ -57,10 +78,26 @@ export const pendingDocuments = async (db: Db): Promise<number> => {
           AND d."verification_status" = 'PENDING'
           AND a."deletedAt" IS NULL
           AND a."status"::text IN ('SUBMITTED', 'UNDER_REVIEW'))
-      +
-      (SELECT count(*) FROM "MemberDocuments"
-        WHERE "deletedAt" IS NULL AND "verification_status" = 'PENDING')
     ) AS n
+  `);
+
+  return Number(rows[0]?.n ?? 0);
+};
+
+/**
+ * Member documents nobody has checked yet — in practice ones a member replaced
+ * from their Profile, since documents adopted from the application arrive
+ * already decided. Counts documents, not members; the tile opens Member
+ * Companies filtered to `?documents=pending`.
+ */
+export const pendingMemberDocuments = async (db: Db): Promise<number> => {
+  const rows = await db.$queryRaw<{ n: bigint }[]>(Prisma.sql`
+    SELECT count(*) AS n
+      FROM "MemberDocuments" d
+      JOIN "Members" m ON m."id" = d."member_id"
+     WHERE d."deletedAt" IS NULL
+       AND d."verification_status" = 'PENDING'
+       AND m."deletedAt" IS NULL
   `);
 
   return Number(rows[0]?.n ?? 0);

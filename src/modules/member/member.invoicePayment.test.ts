@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invoiceFindFirst = vi.fn();
 const invoiceUpdate = vi.fn();
+const membershipTermFindMany = vi.fn(async () => []);
 const membershipTermUpdateMany = vi.fn();
+const membershipTermUpdate = vi.fn();
+const memberUpdate = vi.fn();
 const receiptCount = vi.fn();
 const receiptCreate = vi.fn();
 const paymentCount = vi.fn();
@@ -14,7 +17,12 @@ const recordStatusChange = vi.fn();
 
 const tx = {
   invoice: { update: invoiceUpdate },
-  membershipTerm: { updateMany: membershipTermUpdateMany },
+  membershipTerm: {
+    findMany: membershipTermFindMany,
+    updateMany: membershipTermUpdateMany,
+    update: membershipTermUpdate,
+  },
+  member: { update: memberUpdate },
   payment: { count: paymentCount, create: paymentCreate },
   receipt: { count: receiptCount, create: receiptCreate },
   auditLog: { create: auditLogCreate },

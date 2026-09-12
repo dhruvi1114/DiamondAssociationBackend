@@ -188,6 +188,28 @@ export const findMemberDetail = (db: Db, id: bigint) =>
           },
         },
       },
+      /* The term the member is covered by right now. `terms` (newest expiry) becomes the unpaid
+         renewal as soon as one is raised, so "current" has to come from current_term_id. */
+      current_term: {
+        select: {
+          id: true,
+          term_type: true,
+          valid_from: true,
+          valid_till: true,
+          status: true,
+          fee_plan: {
+            select: {
+              id: true,
+              name: true,
+              billing_cycle: true,
+              amount: true,
+              renewal_amount: true,
+              tax_rate: true,
+              currency: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -260,6 +282,8 @@ export const listMembers = (
      */
     cities?: string[] | undefined;
     states?: string[] | undefined;
+    /** Only members holding at least one PENDING (unchecked) document. */
+    pendingDocuments?: boolean | undefined;
     sortBy: string;
     sortOrder: 'asc' | 'desc';
     limit: number;
@@ -271,6 +295,7 @@ export const listMembers = (
   const categoryIds = params.categoryIds?.length ? params.categoryIds : null;
   const cities = params.cities?.length ? params.cities : null;
   const states = params.states?.length ? params.states : null;
+  const pendingDocuments = params.pendingDocuments === true;
   const sortColumn = Prisma.raw(`m."${params.sortBy}"`);
   const sortDirection = Prisma.raw(params.sortOrder === 'asc' ? 'ASC' : 'DESC');
 
@@ -347,6 +372,11 @@ export const listMembers = (
                           AND mc2.category_id = ANY(${categoryIds}::bigint[])))
        AND (${cities}::text[] IS NULL OR addr.city = ANY(${cities}::text[]))
        AND (${states}::text[] IS NULL OR addr.state = ANY(${states}::text[]))
+       AND (NOT ${pendingDocuments}::boolean
+            OR EXISTS (SELECT 1 FROM "MemberDocuments" md
+                        WHERE md.member_id = m.id
+                          AND md."deletedAt" IS NULL
+                          AND md.verification_status = 'PENDING'))
        AND (${search}::text IS NULL
             OR m.company_name ILIKE ${search}
             OR m.legal_name ILIKE ${search}

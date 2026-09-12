@@ -18,7 +18,15 @@ import * as repo from '@modules/dashboard/dashboard.repository';
 /** What a caller may be told, keyed by the permission that reveals it. */
 const TILES = {
   applications: { permission: 'application.view', count: repo.openApplications },
+  // Same permission as `applications` above, deliberately: this is the other
+  // half of the Member Requests queue (waiting on the applicant, not staff),
+  // so anyone who can see one tile can see the other.
+  applicationsActionNeeded: {
+    permission: 'application.view',
+    count: repo.actionNeededApplications,
+  },
   documents: { permission: 'document.verify', count: repo.pendingDocuments },
+  memberDocuments: { permission: 'document.verify', count: repo.pendingMemberDocuments },
   changeRequests: { permission: 'member.approve_change', count: repo.pendingChangeRequests },
   invoices: { permission: 'invoice.view', count: repo.overdueInvoices },
   renewals: { permission: 'renewal.view', count: repo.renewalsDue },

@@ -3,7 +3,10 @@ import { Prisma } from '@prisma/client';
 
 const invoiceFindFirst = vi.fn();
 const invoiceUpdate = vi.fn();
+const termFindMany = vi.fn(async () => []);
 const termUpdateMany = vi.fn();
+const termUpdate = vi.fn();
+const memberUpdate = vi.fn();
 const paymentCreate = vi.fn();
 const paymentCount = vi.fn();
 const receiptCreate = vi.fn();
@@ -12,7 +15,12 @@ const findMemberById = vi.fn();
 
 const tx = {
   invoice: { update: (...a: unknown[]) => invoiceUpdate(...a) },
-  membershipTerm: { updateMany: (...a: unknown[]) => termUpdateMany(...a) },
+  membershipTerm: {
+    findMany: (...a: unknown[]) => termFindMany(...a),
+    updateMany: (...a: unknown[]) => termUpdateMany(...a),
+    update: (...a: unknown[]) => termUpdate(...a),
+  },
+  member: { update: (...a: unknown[]) => memberUpdate(...a) },
   payment: {
     create: (...a: unknown[]) => paymentCreate(...a),
     count: (...a: unknown[]) => paymentCount(...a),

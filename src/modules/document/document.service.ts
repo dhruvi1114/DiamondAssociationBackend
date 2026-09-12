@@ -7,6 +7,11 @@ import { writeAudit } from '@helpers/audit';
 import { matchesAllowedMime, sniffMime } from '@helpers/fileSignature';
 import { buildStorageKey, storage } from '@helpers/storage';
 import { logger } from '@logger/logger';
+// Uploads, removals and decisions change the dashboard's document counts (and
+// the sidebar badges read from them); the summary is cached for 60s, so each one
+// clears it after committing — otherwise a just-verified file still shows as
+// waiting for up to a minute.
+import { clearDashboardCache } from '@modules/dashboard/dashboard.service';
 import {
   describeSide,
   type DocumentSideValue,
@@ -123,7 +128,7 @@ export const upload = async (input: UploadInput, actor: Actor) => {
   });
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    const saved = await prisma.$transaction(async (tx) => {
       const created = await tx.memberDocument.create({
         data: {
           member_id: input.memberId,
@@ -159,6 +164,10 @@ export const upload = async (input: UploadInput, actor: Actor) => {
 
       return created;
     });
+
+    clearDashboardCache();
+
+    return saved;
   } catch (error) {
     // The row failed, so the file is an orphan. Remove it rather than leaving
     // bytes on disk that nothing references and no retention job knows about.
@@ -180,7 +189,17 @@ export const listForMember = (memberId: bigint) =>
     orderBy: [{ document_type_id: 'asc' }, { version: 'desc' }],
     include: {
       document_type: {
-        select: { id: true, code: true, name: true, is_required: true, sides: true },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          is_required: true,
+          sides: true,
+          // For a held-but-not-listed row: the type's own upload rules, so a
+          // carried-over file can be replaced against them (client, 2026-09-11).
+          max_size_mb: true,
+          allowed_mime: true,
+        },
       },
       verified_by: { select: { id: true, full_name: true } },
     },
@@ -222,8 +241,15 @@ export const checklistForMember = async (memberId: bigint) => {
       // count against completeness however the master has it flagged.
       is_required: false,
       sides: doc.document_type.sides,
-      max_size_mb: 0,
-      allowed_mime: [],
+      /*
+        The type's real rules, not a 0 MB placeholder (client request,
+        2026-09-11): the member may replace a carried-over file from this screen.
+        `upload` checks against these same values — it looks the type up by code
+        with no applies_to filter — so what the screen promises is what the
+        server enforces.
+      */
+      max_size_mb: doc.document_type.max_size_mb,
+      allowed_mime: doc.document_type.allowed_mime,
       // Sorted after everything the association actually asks for.
       display_order: Number.MAX_SAFE_INTEGER,
     });
@@ -261,6 +287,14 @@ export const checklistForMember = async (memberId: bigint) => {
         label: describeSide(type.name, side),
         max_size_mb: type.max_size_mb,
         allowed_mime: type.allowed_mime,
+        /*
+          Every row can take a new file now that held-but-not-listed rows carry
+          their type's real rules (above) — a carried-over GST certificate is
+          replaceable like anything the checklist asks for, and the new version
+          goes back to PENDING. Kept as an explicit field, not dropped: it is the
+          one switch to flip should a type ever need to be record-only again.
+        */
+        uploadable: true,
         document,
       };
     }),
@@ -361,6 +395,8 @@ export const removeOwnDocument = async (memberId: bigint, documentId: bigint, ac
       before: { original_name: document.original_name, version: document.version },
     });
   });
+
+  clearDashboardCache();
 };
 
 /* -------------------------------------------------------------------------- */
@@ -385,7 +421,7 @@ export const verify = async (
     throw invalid('document.rejectionNeedsRemarks');
   }
 
-  return prisma.$transaction(async (tx) => {
+  const decided = await prisma.$transaction(async (tx) => {
     const updated = await tx.memberDocument.update({
       where: { id: documentId },
       data: {
@@ -414,6 +450,10 @@ export const verify = async (
 
     return updated;
   });
+
+  clearDashboardCache();
+
+  return decided;
 };
 
 export type DocumentListItem = Prisma.PromiseReturnType<typeof listForMember>[number];
@@ -608,7 +648,7 @@ export const uploadApplicationDocument = async (
   });
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    const saved = await prisma.$transaction(async (tx) => {
       const created = await tx.applicationDocument.create({
         data: {
           application_id: input.applicationId,
@@ -658,6 +698,10 @@ export const uploadApplicationDocument = async (
 
       return created;
     });
+
+    clearDashboardCache();
+
+    return saved;
   } catch (error) {
     await storage.current.delete(stored.key).catch((cleanupError: unknown) => {
       logger.error('document.orphanCleanupFailed', {
@@ -706,6 +750,8 @@ export const removeApplicationDocument = async (
       before: { original_name: document.original_name, version: document.version },
     });
   });
+
+  clearDashboardCache();
 };
 
 /** Verify or reject a document attached to an application (review screen A-04). */
@@ -723,7 +769,7 @@ export const verifyApplicationDocument = async (
     throw invalid('document.rejectionNeedsRemarks');
   }
 
-  return prisma.$transaction(async (tx) => {
+  const decided = await prisma.$transaction(async (tx) => {
     const updated = await tx.applicationDocument.update({
       where: { id: documentId },
       data: {
@@ -752,6 +798,10 @@ export const verifyApplicationDocument = async (
 
     return updated;
   });
+
+  clearDashboardCache();
+
+  return decided;
 };
 
 /**

@@ -60,14 +60,48 @@ const iec = z
   .trim()
   .regex(/^[0-9A-Z]{10}$/, 'validation.invalidIec');
 
-export const updateProfileSchema = z.object({
-  company_name: trimmed(200).min(1, 'validation.requiredFields').optional(),
-  website: trimmed(200).url('member.invalidWebsite').nullish(),
-  about: trimmed(2000).nullish(),
-  /** Replaces the member's full set of category claims when provided. */
-  category_ids: z.array(z.string().regex(/^\d+$/, 'validation.invalidId')).max(20).optional(),
-  directory_visible: z.boolean().optional(),
-});
+export const updateProfileSchema = z
+  .object({
+    company_name: trimmed(200).min(1, 'validation.requiredFields').optional(),
+    website: trimmed(200).url('member.invalidWebsite').nullish(),
+    about: trimmed(2000).nullish(),
+    /** Replaces the member's full set of category claims when provided. */
+    category_ids: z.array(z.string().regex(/^\d+$/, 'validation.invalidId')).max(20).optional(),
+    directory_visible: z.boolean().optional(),
+    /*
+      The rest of the registration form, saved directly (client decision,
+      2026-09-11): no change request, no approver. Same formats as registration
+      (`register.schema.ts`) so a value accepted there is accepted here.
+    */
+    company_type_id: z.string().regex(/^\d+$/, 'validation.invalidId').optional(),
+    /** The login user's phone — ten bare digits, as registration stores it. */
+    mobile: z
+      .string()
+      .trim()
+      .regex(/^[0-9]{10}$/, 'validation.invalidPhone')
+      .optional(),
+    landline: z
+      .string()
+      .trim()
+      .regex(/^[+]?[0-9\s-]{7,20}$/, 'validation.invalidPhone')
+      .nullish(),
+    pan_number: pan.optional(),
+    gstin_holder: z.boolean().optional(),
+    gst_number: gst.nullish(),
+    iec_code: iec.nullish(),
+    trade_license_no: trimmed(50).nullish(),
+  })
+  .superRefine((value, ctx) => {
+    // A GSTIN holder must give the number; the service re-checks against the
+    // stored values when only one half arrives.
+    if (value.gstin_holder === true && value.gst_number !== undefined && !value.gst_number) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'validation.requiredFields',
+        path: ['gst_number'],
+      });
+    }
+  });
 
 /**
  * A change request carries only the approval-gated fields. Anything self-editable
@@ -156,6 +190,12 @@ export const listMembersSchema = z.object({
    */
   city: csv(trimmed(100).min(1)),
   state: csv(trimmed(100).min(1)),
+  /**
+   * `pending` narrows to members holding a document nobody has checked yet —
+   * in practice one the member replaced from their Profile, since everything
+   * adopted from the application arrives already decided.
+   */
+  documents: z.enum(['pending']).optional(),
   sortBy: z.enum(MEMBER_SORT_COLUMNS).default('createdAt'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
 });

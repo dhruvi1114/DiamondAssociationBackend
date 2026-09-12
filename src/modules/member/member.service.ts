@@ -219,8 +219,64 @@ export const updateOwnProfile = async (
   const existing = await repo.findMemberById(prisma, memberId);
   if (!existing) throw notFound('member.notFound');
 
+  /*
+    Category lock lifted (client decision, 2026-09-11): members edit their own
+    category from the profile, and fees do not depend on it. Commented rather
+    than deleted so the rule can come back in one step.
+
   if (input.category_ids !== undefined && existing.status !== MemberStatus.DRAFT) {
     throw conflict('member.categoryLocked');
+  }
+  */
+
+  // GSTIN: checked against what will actually be stored, since the PATCH may
+  // carry only one half. Not a holder → no number is kept.
+  const gstinHolder = input.gstin_holder ?? existing.gstin_holder;
+  const gstNumber = gstinHolder
+    ? input.gst_number !== undefined
+      ? input.gst_number
+      : existing.gst_number
+    : null;
+  if (gstinHolder && !gstNumber) {
+    throw conflict('validation.requiredFields', {
+      fields: { gst_number: 'validation.requiredFields' },
+    });
+  }
+
+  if (
+    input.company_type_id !== undefined &&
+    BigInt(input.company_type_id) !== existing.company_type_id
+  ) {
+    const type = await prisma.companyType.findFirst({
+      where: { id: BigInt(input.company_type_id), is_active: true },
+      select: { id: true },
+    });
+    if (!type) {
+      throw conflict('masters.companyTypeNotFound', {
+        fields: { company_type_id: 'masters.companyTypeNotFound' },
+      });
+    }
+  }
+
+  // The mobile is the login user's phone (OTP, WhatsApp) and unique across users.
+  const user =
+    input.mobile !== undefined
+      ? await prisma.user.findUnique({
+          where: { id: existing.primary_user_id },
+          select: { phone: true },
+        })
+      : null;
+  const mobileChanged = input.mobile !== undefined && input.mobile !== (user?.phone ?? null);
+  if (mobileChanged) {
+    const taken = await prisma.user.findFirst({
+      where: { phone: input.mobile, deletedAt: null, id: { not: existing.primary_user_id } },
+      select: { id: true },
+    });
+    if (taken) {
+      throw conflict('application.mobileAlreadyRegistered', {
+        fields: { mobile: 'application.mobileAlreadyRegistered' },
+      });
+    }
   }
 
   return prisma.$transaction(async (tx) => {
@@ -231,7 +287,24 @@ export const updateOwnProfile = async (
       ...(input.directory_visible !== undefined
         ? { directory_visible: input.directory_visible }
         : {}),
+      ...(input.company_type_id !== undefined
+        ? { company_type: { connect: { id: BigInt(input.company_type_id) } } }
+        : {}),
+      ...(input.landline !== undefined ? { landline: input.landline } : {}),
+      ...(input.pan_number !== undefined ? { pan_number: input.pan_number } : {}),
+      ...(input.gstin_holder !== undefined || input.gst_number !== undefined
+        ? { gstin_holder: gstinHolder, gst_number: gstNumber }
+        : {}),
+      ...(input.iec_code !== undefined ? { iec_code: input.iec_code } : {}),
+      ...(input.trade_license_no !== undefined ? { trade_license_no: input.trade_license_no } : {}),
     });
+
+    if (mobileChanged) {
+      await tx.user.update({
+        where: { id: existing.primary_user_id },
+        data: { phone: input.mobile ?? null },
+      });
+    }
 
     if (input.category_ids !== undefined) {
       await repo.setMemberCategories(
@@ -246,8 +319,34 @@ export const updateOwnProfile = async (
       action: AUDIT_ACTIONS.MEMBER_PROFILE_UPDATED,
       entityName: 'Members',
       entityId: memberId,
-      before: { company_name: existing.company_name, website: existing.website },
-      after: { company_name: updated.company_name, website: updated.website },
+      // Every field this save can touch, so the Audit Log shows what changed.
+      before: {
+        company_name: existing.company_name,
+        website: existing.website,
+        about: existing.about,
+        company_type_id: existing.company_type_id?.toString() ?? null,
+        landline: existing.landline,
+        pan_number: existing.pan_number,
+        gstin_holder: existing.gstin_holder,
+        gst_number: existing.gst_number,
+        iec_code: existing.iec_code,
+        trade_license_no: existing.trade_license_no,
+        ...(mobileChanged ? { mobile: user?.phone ?? null } : {}),
+      },
+      after: {
+        company_name: updated.company_name,
+        website: updated.website,
+        about: updated.about,
+        company_type_id: updated.company_type_id?.toString() ?? null,
+        landline: updated.landline,
+        pan_number: updated.pan_number,
+        gstin_holder: updated.gstin_holder,
+        gst_number: updated.gst_number,
+        iec_code: updated.iec_code,
+        trade_license_no: updated.trade_license_no,
+        ...(mobileChanged ? { mobile: input.mobile } : {}),
+        ...(input.category_ids !== undefined ? { category_ids: input.category_ids } : {}),
+      },
     });
 
     return updated;
@@ -507,6 +606,7 @@ export const listMembers = async (query: ListMembersQuery) => {
     tierId: query.tier_id ? BigInt(query.tier_id) : undefined,
     cities: query.city,
     states: query.state,
+    pendingDocuments: query.documents === 'pending',
     sortBy: query.sortBy,
     sortOrder: query.sortOrder,
     limit: query.limit,

@@ -131,6 +131,9 @@ export const EDITABLE_SETTINGS: Record<string, z.ZodType<string>> = {
   // A grace period, not a second membership term — a year of grace would mean
   // expiry never actually costs anything.
   'membership.grace_days': wholeNumber(0, 365),
+  // At least a day, or nobody is billed before their term ends. Capped at 90: a longer notice
+  // would bill a monthly member for next month before this one has started.
+  'membership.renewal_notice_days': wholeNumber(1, 90),
   'events.guest_booking_otp': boolean,
   'events.booking_lookup_enabled': boolean,
 };

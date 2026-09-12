@@ -28,6 +28,7 @@ import {
   memberRouter,
 } from '@modules/member/member.routes';
 import { rbacRouter } from '@modules/rbac/rbac.routes';
+import { renewalAdminRouter, renewalMemberRouter } from '@modules/renewal/renewal.routes';
 import { reportRouter } from '@modules/report/report.routes';
 import { sitePublicRouter } from '@modules/site/site.routes';
 import {
@@ -60,6 +61,9 @@ router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, auditRouter);
 // M10 — the work-queue counts behind the admin landing page.
 router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, dashboardRouter);
 
+// M6 — membership renewal. The A-20 buckets/list/run-now queue, admin-side.
+router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, renewalAdminRouter);
+
 // M10 — reports. `report.view` to read, `report.export` to download; both are
 // bound to /reports, not to the router, for the same reason as audit above.
 router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, reportRouter);
@@ -84,6 +88,11 @@ router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, memberPublicRouter);
 // the public router exposes only the published, allowlisted subset (C-03).
 router.use(`${END_POINTS.V1}${END_POINTS.ADMIN}`, mastersAdminRouter);
 router.use(`${END_POINTS.V1}${END_POINTS.PUBLIC}`, mastersPublicRouter);
+
+// M6 — the member's own renewal term (C-18, C-23). Nothing else is mounted on
+// `/membership` with a router-wide guard — `mastersPublicRouter` answers
+// `GET /public/membership` (a different prefix) — so this mounts cleanly.
+router.use(`${END_POINTS.V1}${END_POINTS.MEMBERSHIP}`, renewalMemberRouter);
 
 // M3 — the member record, KYC documents and staff member management.
 router.use(`${END_POINTS.V1}${END_POINTS.MEMBERS}`, memberRouter);

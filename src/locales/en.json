@@ -198,7 +198,17 @@
     "initiated": "Renewal started",
     "completed": "Membership renewed",
     "expired": "This membership has expired",
-    "reminderSent": "Renewal reminder sent"
+    "reminderSent": "Renewal reminder sent",
+    "noPendingRenewal": "There is no renewal invoice waiting to be paid",
+    "claimPending": "Your payment is being checked, so the plan can't be changed right now",
+    "planNotAvailable": "That plan is not available",
+    "samePlan": "You are already renewing on this plan",
+    "planChanged": "Plan changed. Your renewal invoice has been reissued",
+    "runCompleted": "Renewal run completed",
+    "declined": "You have chosen not to renew",
+    "resumed": "Renewal restarted",
+    "cannotDecline": "This renewal is already paid or being checked, so it can't be declined",
+    "notDeclined": "There is no declined renewal to restart"
   },
   "event": {
     "notFound": "That event no longer exists",

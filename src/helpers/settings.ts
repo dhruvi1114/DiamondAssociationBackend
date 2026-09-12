@@ -116,6 +116,8 @@ export const SETTING_KEYS = {
    * three days late renewing is not an outsider.
    */
   MEMBERSHIP_GRACE_DAYS: 'membership.grace_days',
+  /** Days before a term ends that its renewal term + invoice are raised (M6, decided 2026-09-10). */
+  RENEWAL_NOTICE_DAYS: 'membership.renewal_notice_days',
   /**
    * Whether the member directory is available at all. Off closes it for every
    * member at once; it does not change any individual member's own listing

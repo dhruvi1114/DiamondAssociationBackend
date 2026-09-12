@@ -230,6 +230,14 @@ export const AUDIT_ACTIONS = {
   /** A membership term was opened. */
   TERM_CREATED: 'membership_term.created',
 
+  // --- M6: membership renewal ------------------------------------------------
+  /** An admin ran the renewal cycle on demand ("Generate Invoices", A-20). */
+  RENEWAL_RUN: 'renewal.run',
+  /** The member said they will not renew after their current term. */
+  RENEWAL_DECLINED: 'renewal.declined',
+  /** "Renew after all" — the member undid a decline. */
+  RENEWAL_RESUMED: 'renewal.resumed',
+
   // --- M7: company team logins ----------------------------------------------
   /** An owner invited someone onto the company roster. */
   MEMBER_TEAM_INVITED: 'member_team.invited',

@@ -90,6 +90,10 @@ enum TermStatus {
   /// Created with its invoice; membership is not active until that invoice is paid.
   PENDING_PAYMENT
 
+  /// Paid before its start date. Becomes ACTIVE on valid_from (the renewal job's start step);
+  /// needed because a member may hold only one ACTIVE term and the current one is still running.
+  PAID_UPCOMING
+
   /// Paid and running.
   ACTIVE
 
@@ -659,6 +663,10 @@ model MembershipTerm {
   /// renewal engine arrives. One column now, or a data-repair job later.
   fee_plan_id BigInt?
 
+  /// When the member said they will not renew after this term. The renewal job raises nothing
+  /// for a term with this set; "renew after all" clears it. NULL means no decision was made.
+  renewal_declined_at DateTime? @db.Timestamptz(6)
+
   /// Row creation timestamp (UTC).
   createdAt DateTime @default(now()) @db.Timestamptz(6)
 
@@ -683,6 +691,9 @@ model MembershipTerm {
 
   /// The member records pointing at this term as their current one.
   current_for Member[] @relation("MemberCurrentTerm")
+
+  /// Renewal reminders sent for this (renewal) term, one per stage.
+  reminders RenewalReminder[]
 
   @@index([member_id, valid_till(sort: Desc)])
   @@index([status, valid_till])
@@ -903,4 +914,30 @@ model InvoiceItem {
   @@index([invoice_id, sort_order])
   @@index([fee_plan_id])
   @@map("InvoiceItems")
+}
+
+/// One renewal reminder sent for one renewal term at one stage (T-15, T-7, T-3, T-0). Exists so a
+/// job that runs twice cannot send the same reminder twice: the unique (term_id, reminder_code)
+/// makes the second insert a no-op, and a message is queued only when the insert happened.
+model RenewalReminder {
+  /// Surrogate key.
+  id BigInt @id @default(autoincrement())
+
+  /// FK to MembershipTerms.id — the unpaid renewal term the reminder is about. ON DELETE CASCADE.
+  term_id BigInt
+
+  /// Stage: 'T-15', 'T-7', 'T-3' or 'T-0' (days before the current term ends). CHECK-constrained.
+  reminder_code String @db.VarChar(10)
+
+  /// Calendar day the reminder was sent (server's local day).
+  sent_on DateTime @db.Date
+
+  /// Row creation timestamp (UTC).
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  /// The renewal term reminded about.
+  term MembershipTerm @relation(fields: [term_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([term_id, reminder_code])
+  @@map("RenewalReminders")
 }

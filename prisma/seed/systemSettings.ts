@@ -104,6 +104,15 @@ const SETTINGS: SettingSeed[] = [
     is_public: false,
   },
   {
+    key: 'membership.renewal_notice_days',
+    value: '15',
+    value_type: SettingValueType.NUMBER,
+    group: 'membership',
+    description:
+      'How many days before a membership ends its renewal invoice is raised. Reminders follow at 7 and 3 days and on the last day. With invoice due days at 15 the invoice falls due on the expiry date.',
+    is_public: false,
+  },
+  {
     key: 'billing.invoice_due_days',
     value: '15',
     value_type: SettingValueType.NUMBER,
